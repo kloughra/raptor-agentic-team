@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-const BUNDLED_TEMPLATE_PATH = path.join(__dirname, "..", "template", "TEAM.md");
+const BUNDLED_TEMPLATE_PATH = path.join(__dirname, "..", "..", "template", "TEAM.md");
 
 export const SCAFFOLD_DIRS = [
   "docs/specs",
