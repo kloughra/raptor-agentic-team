@@ -51,7 +51,7 @@ export function generateBacklog(
 ): string {
   const filtered = (featureIdeas ?? []).filter((idea) => idea.trim().length > 0);
 
-  let content = `# Backlog\n\n## Sprint {N} — In Progress\n\n## Ready (prioritized, next sprint)\n\n## Inbox (unprioritized)\n`;
+  let content = `# Backlog\n\n## Ready (prioritized, next sprint)\n\n## Inbox (unprioritized)\n`;
 
   if (filtered.length > 0) {
     for (const idea of filtered) {

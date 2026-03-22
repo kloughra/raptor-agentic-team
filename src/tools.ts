@@ -211,6 +211,7 @@ export async function getProjectStatus(
   }
 
   return {
+    status: "success",
     project: args.name,
     sprint: {
       current: sprintNumber,

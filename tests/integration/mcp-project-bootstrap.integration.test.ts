@@ -291,7 +291,7 @@ describe("get_project_status", () => {
     // Update backlog to have a Sprint 2 section
     const backlogPath = path.join(projectsBaseDir, "my-app", "docs", "backlog.md");
     let backlog = fs.readFileSync(backlogPath, "utf-8");
-    backlog = backlog.replace("## Sprint {N} — In Progress", "## Sprint 2 — In Progress");
+    backlog = "## Sprint 2 — In Progress\n\n" + backlog;
     fs.writeFileSync(backlogPath, backlog);
 
     const result = await getProjectStatus(ctx, { name: "my-app" });
