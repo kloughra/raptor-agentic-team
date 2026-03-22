@@ -49,21 +49,27 @@ async function main() {
   // Register bootstrap_project tool
   server.tool(
     "bootstrap_project",
-    "Create a new project repository with the full agentic team scaffold",
+    "Create a new project repository with the full agentic team scaffold. Ask the user for: project location, app name, and any initial feature ideas.",
     {
       name: z
         .string()
         .describe(
-          "Project name (lowercase, hyphen-separated, no special characters)"
+          "Project name (lowercase, hyphen-separated, no special characters, e.g. 'my-app')"
         ),
       description: z
         .string()
         .describe("Brief description of what this project is"),
+      location: z
+        .string()
+        .optional()
+        .describe(
+          "Directory where the project folder will be created (e.g. '/Users/me/projects'). Defaults to ~/projects if not specified."
+        ),
       featureIdeas: z
         .array(z.string())
         .optional()
         .describe(
-          "Optional list of initial feature ideas to add to the backlog Inbox"
+          "List of initial feature ideas to seed the backlog Inbox (e.g. ['user-login', 'search', 'notifications'])"
         ),
     },
     async (args) => {

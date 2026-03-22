@@ -180,6 +180,23 @@ describe("bootstrap_project", () => {
     expect(fs.existsSync(newBaseDir)).toBe(true);
   });
 
+  it("uses explicit location parameter over default base dir", async () => {
+    const customLocation = path.join(tmpDir, "custom", "location");
+    const result = await bootstrapProject(ctx, {
+      name: "my-app",
+      description: "Test",
+      location: customLocation,
+    });
+    expect(result.status).toBe("success");
+
+    const projectPath = path.join(customLocation, "my-app");
+    expect(fs.existsSync(projectPath)).toBe(true);
+    expect(fs.existsSync(path.join(projectPath, "TEAM.md"))).toBe(true);
+
+    // Verify it's NOT in the default location
+    expect(fs.existsSync(path.join(projectsBaseDir, "my-app"))).toBe(false);
+  });
+
   it("rejects duplicate project names without modifying existing project", async () => {
     await bootstrapProject(ctx, { name: "my-app", description: "First" });
     const firstBacklog = fs.readFileSync(path.join(projectsBaseDir, "my-app", "docs", "backlog.md"), "utf-8");
