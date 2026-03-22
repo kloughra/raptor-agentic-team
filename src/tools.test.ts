@@ -153,6 +153,19 @@ describe("bootstrapProject", () => {
     expect(fs.existsSync(newBaseDir)).toBe(true);
   });
 
+  it("uses explicit location when provided", async () => {
+    const customLocation = path.join(tmpDir, "custom", "location");
+    const result = await bootstrapProject(ctx, {
+      name: "my-app",
+      description: "Test",
+      location: customLocation,
+    });
+    expect(result.status).toBe("success");
+    expect(fs.existsSync(path.join(customLocation, "my-app"))).toBe(true);
+    // Should NOT be in the default projectsBaseDir
+    expect(fs.existsSync(path.join(projectsBaseDir, "my-app"))).toBe(false);
+  });
+
   it("response includes path and next steps", async () => {
     const result = await bootstrapProject(ctx, {
       name: "my-app",

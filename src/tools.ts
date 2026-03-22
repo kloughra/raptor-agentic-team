@@ -28,7 +28,7 @@ export interface ToolContext {
 
 export async function bootstrapProject(
   ctx: ToolContext,
-  args: { name: string; description: string; featureIdeas?: string[] }
+  args: { name: string; description: string; location?: string; featureIdeas?: string[] }
 ): Promise<Record<string, unknown>> {
   // Validate project name
   if (!PROJECT_NAME_REGEX.test(args.name)) {
@@ -46,18 +46,21 @@ export async function bootstrapProject(
     };
   }
 
+  // Use explicit location if provided, otherwise fall back to config default
+  const baseDir = args.location || ctx.projectsBaseDir;
+
   // Ensure base directory exists
   try {
-    fs.mkdirSync(ctx.projectsBaseDir, { recursive: true });
+    fs.mkdirSync(baseDir, { recursive: true });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return {
       status: "error",
-      message: `Cannot create base directory '${ctx.projectsBaseDir}': ${msg}`,
+      message: `Cannot create base directory '${baseDir}': ${msg}`,
     };
   }
 
-  const projectPath = path.join(ctx.projectsBaseDir, args.name);
+  const projectPath = path.join(baseDir, args.name);
 
   // Check if directory already exists on disk (even if not in registry)
   if (fs.existsSync(projectPath)) {
