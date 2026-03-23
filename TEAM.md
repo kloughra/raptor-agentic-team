@@ -278,6 +278,23 @@ After bootstrap, the team enters Sprint 1 using the normal Sprint Workflow.
 
 ---
 
+## User Checkpoints
+
+The sprint runs autonomously between roles — agents handle their own handoffs via git commits. The user (stakeholder) is only pulled in at these four explicit checkpoints:
+
+| # | When | What the user does | Sprint workflow step |
+|---|------|---------------------|----------------------|
+| 1 | After PO authors spec | Review features and acceptance criteria; provide feedback or approve | Step 1 → Step 2 |
+| 2 | After Architect proposes technology choices | Approve or reject technology decisions | Step 2 |
+| 3 | After Engineer opens PR | Review the pull request | Step 6 → Step 7 |
+| 4 | Sprint demo | Watch the demo, give feedback (accepted / needs changes / new requirement) | Step 8 → Step 9 |
+
+**Between checkpoints, agents proceed autonomously.** Role-to-role handoffs (PO → Architect, Architect → QA, QA → Engineer, etc.) do not require user involvement — they are managed by the orchestrator and signaled via `[HANDOFF]` commits.
+
+If an agent hits a blocker that cannot be resolved by consulting another role, it escalates to the user outside of these checkpoints (see Failure Modes & Escalation).
+
+---
+
 ## Sprint Workflow
 
 Each step lists its dependencies explicitly. Steps that share the same dependency **may run in parallel** where noted.
