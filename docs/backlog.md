@@ -1,7 +1,6 @@
 # Backlog
 
-## Sprint 2 — In Progress
-- [ ] mcp-agent-orchestration: Core orchestration loop — Raptor runs a sprint from PO spec through Engineer implementation with user checkpoints; sequential execution, user-friendly orchestrator view in main session — assigned to Engineer
+## Sprint 3 — Not Started
 
 ## Ready (prioritized, next sprint)
 - agent-parallel-execution: Parallel agent execution where TEAM.md allows it (Architect + QA partial parallel, Architect review + QA test run)
@@ -20,4 +19,5 @@
 - multi-device-sync: Sync project state across devices — source: user request
 
 ## Done
+- [x] mcp-agent-orchestration: Core orchestration loop with run_sprint and resume_sprint MCP tools, user checkpoints, sprint state persistence (Sprint 2)
 - [x] mcp-project-bootstrap: Raptor MCP server with bootstrap_project, list_projects, and get_project_status tools (Sprint 1)
