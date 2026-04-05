@@ -15,6 +15,8 @@ import {
   bootstrapProject,
   listProjects,
   getProjectStatus,
+  runSprint,
+  resumeSprintTool,
   ToolContext,
 } from "./tools";
 
@@ -107,6 +109,92 @@ async function main() {
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };
+    }
+  );
+
+  // Register run_sprint tool
+  server.tool(
+    "run_sprint",
+    "Run a sprint for a project — orchestrates agents through the full BDD/TDD workflow with user checkpoints",
+    {
+      name: z
+        .string()
+        .describe("Project name as registered in Raptor"),
+      sprint: z
+        .number()
+        .int()
+        .positive()
+        .describe("Sprint number to run"),
+    },
+    async (args) => {
+      const result = await runSprint(ctx, args);
+      const content: { type: "text"; text: string }[] = [];
+
+      // Always include progress table
+      if (result.progress) {
+        content.push({ type: "text" as const, text: result.progress as string });
+      }
+
+      // Include checkpoint prompt if paused
+      if (result.checkpoint) {
+        const cp = result.checkpoint as { title: string; context: string };
+        content.push({
+          type: "text" as const,
+          text: `\n## Checkpoint: ${cp.title}\n\n${cp.context}`,
+        });
+      }
+
+      // Include message if present
+      if (result.message) {
+        content.push({ type: "text" as const, text: result.message as string });
+      }
+
+      return { content };
+    }
+  );
+
+  // Register resume_sprint tool
+  server.tool(
+    "resume_sprint",
+    "Resume a sprint after a user checkpoint — provide your decision (approve/request-changes) and optional feedback",
+    {
+      name: z
+        .string()
+        .describe("Project name"),
+      sprint: z
+        .number()
+        .int()
+        .positive()
+        .describe("Sprint number"),
+      action: z
+        .enum(["approve", "request-changes"])
+        .describe("User's decision at the checkpoint"),
+      feedback: z
+        .string()
+        .optional()
+        .describe("Free-text feedback from the user"),
+    },
+    async (args) => {
+      const result = await resumeSprintTool(ctx, args);
+      const content: { type: "text"; text: string }[] = [];
+
+      if (result.progress) {
+        content.push({ type: "text" as const, text: result.progress as string });
+      }
+
+      if (result.checkpoint) {
+        const cp = result.checkpoint as { title: string; context: string };
+        content.push({
+          type: "text" as const,
+          text: `\n## Checkpoint: ${cp.title}\n\n${cp.context}`,
+        });
+      }
+
+      if (result.message) {
+        content.push({ type: "text" as const, text: result.message as string });
+      }
+
+      return { content };
     }
   );
 
