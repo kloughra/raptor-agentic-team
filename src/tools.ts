@@ -17,6 +17,12 @@ import {
   parseEscalations,
   GitLogEntry,
 } from "./git-parser";
+import {
+  runSprintFromStep,
+  resumeSprint,
+  loadSprintState,
+  renderProgressTable,
+} from "./orchestrator";
 
 const PROJECT_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
 
@@ -213,6 +219,27 @@ export async function getProjectStatus(
     // If git log fails, return empty arrays
   }
 
+  // Load orchestrator sprint state if available
+  let orchestratorState = null;
+  let orchestratorProgress = null;
+  if (sprintNumber > 0) {
+    const sprintState = loadSprintState(args.name, sprintNumber);
+    if (sprintState) {
+      orchestratorState = {
+        status: sprintState.status,
+        currentStep: sprintState.currentStep,
+        steps: sprintState.steps.map((s) => ({
+          step: s.step,
+          role: s.role,
+          name: s.name,
+          status: s.status,
+        })),
+        checkpoints: sprintState.checkpoints,
+      };
+      orchestratorProgress = renderProgressTable(sprintState);
+    }
+  }
+
   return {
     status: "success",
     project: args.name,
@@ -228,5 +255,115 @@ export async function getProjectStatus(
     backlog: backlogSections,
     blockers,
     escalations,
+    orchestrator: orchestratorState,
+    orchestratorProgress,
+  };
+}
+
+export async function runSprint(
+  ctx: ToolContext,
+  args: { name: string; sprint: number }
+): Promise<Record<string, unknown>> {
+  const project = await ctx.registry.findProject(args.name);
+  if (!project) {
+    return {
+      status: "error",
+      message: `Project '${args.name}' not found. Use bootstrap_project to create it first.`,
+    };
+  }
+
+  if (!fs.existsSync(project.path)) {
+    return {
+      status: "error",
+      message: `Project directory missing at '${project.path}'.`,
+    };
+  }
+
+  // Verify backlog has items for this sprint
+  const backlogPath = path.join(project.path, "docs", "backlog.md");
+  if (fs.existsSync(backlogPath)) {
+    const content = fs.readFileSync(backlogPath, "utf-8");
+    const sprintSection = content.match(
+      new RegExp(`## Sprint ${args.sprint}[^]*?(?=\\n## |$)`)
+    );
+    if (!sprintSection || !sprintSection[0].includes("- [")) {
+      return {
+        status: "error",
+        message: `No backlog items found for sprint ${args.sprint}. Add items to the backlog before running a sprint.`,
+      };
+    }
+  } else {
+    return {
+      status: "error",
+      message: "No backlog.md found in the project.",
+    };
+  }
+
+  const result = await runSprintFromStep(
+    project.path,
+    args.name,
+    args.sprint,
+    1
+  );
+
+  return {
+    status: result.status,
+    progress: result.progress,
+    checkpoint: result.checkpoint
+      ? {
+          type: result.checkpoint.type,
+          title: result.checkpoint.title,
+          context: result.checkpoint.context,
+          options: result.checkpoint.options,
+        }
+      : undefined,
+    message: result.message,
+  };
+}
+
+export async function resumeSprintTool(
+  ctx: ToolContext,
+  args: {
+    name: string;
+    sprint: number;
+    action: "approve" | "request-changes";
+    feedback?: string;
+  }
+): Promise<Record<string, unknown>> {
+  const project = await ctx.registry.findProject(args.name);
+  if (!project) {
+    return {
+      status: "error",
+      message: `Project '${args.name}' not found.`,
+    };
+  }
+
+  if (!fs.existsSync(project.path)) {
+    return {
+      status: "error",
+      message: `Project directory missing at '${project.path}'.`,
+    };
+  }
+
+  const result = await resumeSprint(
+    project.path,
+    args.name,
+    args.sprint,
+    args.action,
+    args.feedback
+  );
+
+  return {
+    status: result.status,
+    progress: result.progress,
+    checkpoint: result.checkpoint
+      ? {
+          type: result.checkpoint.type,
+          title: result.checkpoint.title,
+          context: result.checkpoint.context,
+          options: result.checkpoint.options,
+        }
+      : undefined,
+    message: result.message,
   };
 }
