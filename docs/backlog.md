@@ -1,12 +1,16 @@
 # Backlog
 
-## Sprint 3 — Not Started
+## Sprint 3 — In Progress
+- [ ] agent-failure-recovery: Circuit breaker (3 retries), structured retry with progressive context, resume from failed/escalated state
+- [ ] sprint-completion-on-merge: PR merge as sprint exit gate — auto-merge after demo approval, sprint ends on merge
+
+## Sprint 4 — Planned
+- cross-sprint-context: Cross-sprint memory and context passing between agent sessions — sprint summary artifacts as input to future sprints
+- agent-retrospective-improvements: Each agent proposes a TEAM.md improvement after their step; user checkpoint to review and select; retro doc in sprint workspace
 
 ## Ready (prioritized, next sprint)
 - agent-parallel-execution: Parallel agent execution where TEAM.md allows it (Architect + QA partial parallel, Architect review + QA test run)
-- agent-failure-recovery: Automated circuit breaker and agent failure recovery (retry, escalate, resume)
 - multi-engineer-coordination: Multi-engineer support with feature branch isolation and conflict resolution
-- cross-sprint-context: Cross-sprint memory and context passing between agent sessions
 - dino-agent-names: Assign dinosaur-themed names to each agent role
 
 ## Inbox (unprioritized)
