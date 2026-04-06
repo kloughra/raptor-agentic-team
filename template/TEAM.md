@@ -198,6 +198,7 @@ When multiple engineers work in the same sprint, the following rules prevent con
 
 ### Avoiding Git Conflicts
 
+- **All sprint commits go on the sprint branch** — never commit directly to `main`. This includes PO backlog updates, spec authoring, architecture docs, and any other sprint prep work. Create the sprint branch (`sprint-{N}/{feature-slug}`) first, then commit everything there. This ensures `main` stays clean and can always fast-forward to `origin/main` after a squash merge.
 - Each engineer works on a **separate feature branch**: `sprint-{N}/{feature-slug}` — one branch per feature, one feature per engineer
 - If two engineers must contribute to the **same feature**, they coordinate through sub-branches: `sprint-{N}/{feature-slug}/{engineer-name}` and merge into the feature branch via PR
 - Engineers **pull from main before branching** and **rebase before opening a PR** to minimize merge conflicts

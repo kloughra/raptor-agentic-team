@@ -15,7 +15,7 @@ Development follows the structured BDD/TDD sprint workflow defined in TEAM.md. K
 - **Roles**: Product Owner (specs, backlog, acceptance), QA Engineer (tests before code), Architect (design, NFRs, PR review), Software Engineer(s) (TDD implementation)
 - **Sprint workflow** (sequential with noted parallelism):
   1. PO authors spec → 2. Architect designs → 3. QA writes tests → 4. PO reviews tests → 5. Engineers implement TDD → 6. PR → 7. Architect + QA review (parallel) → 8. Demo → 9. Feedback
-- **Branching**: `sprint-{N}/{feature-slug}` for features, `hotfix/{description}` for hotfixes
+- **Branching**: `sprint-{N}/{feature-slug}` for features, `hotfix/{description}` for hotfixes. **All sprint commits (including PO backlog prep, specs, architecture) go on the sprint branch — never commit to `main` directly.**
 - **Handoffs are git commits**: `[HANDOFF] From -> To: artifact for feature`
 - **Definition of Done**: all tests pass, PR with test evidence, peer review, PO acceptance, demo conducted
 - **Circuit breaker**: if an action fails 3 times, stop and escalate to user with `[ESCALATE]`
