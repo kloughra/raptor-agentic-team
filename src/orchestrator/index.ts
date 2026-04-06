@@ -17,5 +17,12 @@ export type { AgentResult } from "./agents";
 export { runSprintFromStep, resumeSprint, MAX_RETRY_ATTEMPTS } from "./runner";
 export type { SprintResult } from "./runner";
 
-export { executeMerge } from "./merge";
+export { executeMerge, updatePrDodChecklist, generateDodSummary } from "./merge";
 export type { MergeResult } from "./merge";
+
+export { generateSprintSummary, loadSprintSummaries } from "./summary";
+
+export { buildRetroPrompt, parseRetroProposal, generateRetroDocument, updateRetroDocWithDecisions, applyImprovements, buildSprintContextForRetro, parseRetroSelection } from "./retro";
+export type { RetroProposal } from "./retro";
+
+export type { DodChecklist } from "./state";

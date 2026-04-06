@@ -1,5 +1,6 @@
 import { execFile } from "child_process";
 import simpleGit from "simple-git";
+import { DodChecklist } from "./state";
 
 export interface MergeResult {
   success: boolean;
@@ -160,4 +161,65 @@ export async function executeMerge(
 
   // No GitHub PR — fall back to local git merge
   return mergeViaLocalGit(projectPath, branchName, featureSlug, sprint);
+}
+
+/**
+ * Update the PR description to check all DoD items.
+ * Returns true if successful, false if gh is unavailable or update fails.
+ */
+export async function updatePrDodChecklist(
+  cwd: string,
+  dod: DodChecklist
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    // First, get the current PR body
+    execFile(
+      "gh",
+      ["pr", "view", "--json", "body", "--jq", ".body"],
+      { cwd, timeout: GH_TIMEOUT_MS },
+      (error, stdout) => {
+        if (error) {
+          resolve(false);
+          return;
+        }
+
+        let body = stdout.trim();
+        if (!body) {
+          resolve(false);
+          return;
+        }
+
+        // Replace DoD checklist items
+        if (dod.testsPass) body = body.replace("- [ ] All tests pass", "- [x] All tests pass");
+        if (dod.codeCommitted) body = body.replace("- [ ] Code committed and pushed", "- [x] Code committed and pushed");
+        if (dod.prReviewApproved) body = body.replace("- [ ] Peer review approved", "- [x] Peer review approved");
+        if (dod.poAccepted) body = body.replace("- [ ] PO accepted", "- [x] PO accepted");
+
+        // Update the PR
+        execFile(
+          "gh",
+          ["pr", "edit", "--body", body],
+          { cwd, timeout: GH_TIMEOUT_MS },
+          (editError) => {
+            resolve(!editError);
+          }
+        );
+      }
+    );
+  });
+}
+
+/**
+ * Generate a DoD summary string for merge commit messages (fallback when gh unavailable).
+ */
+export function generateDodSummary(dod: DodChecklist): string {
+  const items = [
+    { label: "Tests pass", value: dod.testsPass },
+    { label: "Code committed", value: dod.codeCommitted },
+    { label: "Peer review approved", value: dod.prReviewApproved },
+    { label: "PO accepted", value: dod.poAccepted },
+    { label: "Demo completed", value: dod.demoCompleted },
+  ];
+
+  return items.map((i) => `${i.value ? "✅" : "❌"} ${i.label}`).join("\n");
 }

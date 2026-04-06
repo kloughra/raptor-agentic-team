@@ -1,12 +1,9 @@
 # Backlog
 
-## Sprint 3 — In Progress
-- [ ] agent-failure-recovery: Circuit breaker (3 retries), structured retry with progressive context, resume from failed/escalated state
-- [ ] sprint-completion-on-merge: PR merge as sprint exit gate — auto-merge after demo approval, sprint ends on merge
-
-## Sprint 4 — Planned
-- cross-sprint-context: Cross-sprint memory and context passing between agent sessions — sprint summary artifacts as input to future sprints
-- agent-retrospective-improvements: Each agent proposes a TEAM.md improvement after their step; user checkpoint to review and select; retro doc in sprint workspace
+## Sprint 4 — In Progress
+- [ ] cross-sprint-context: Sprint summary artifacts generated after each sprint, fed as context to future sprint agents
+- [ ] agent-retrospective-improvements: Each role proposes TEAM.md improvements; user reviews at new retro checkpoint; adopted changes applied
+- [ ] dod-checklist-tracking: Track Definition of Done checklist in sprint state and update PR description before merge to reflect all items satisfied
 
 ## Ready (prioritized, next sprint)
 - agent-parallel-execution: Parallel agent execution where TEAM.md allows it (Architect + QA partial parallel, Architect review + QA test run)
@@ -23,5 +20,7 @@
 - multi-device-sync: Sync project state across devices — source: user request
 
 ## Done
+- [x] agent-failure-recovery: Circuit breaker (3 retries), structured retry with progressive context, resume from failed/escalated state (Sprint 3)
+- [x] sprint-completion-on-merge: PR merge as sprint exit gate — auto-merge after demo approval, sprint ends on merge (Sprint 3)
 - [x] mcp-agent-orchestration: Core orchestration loop with run_sprint and resume_sprint MCP tools, user checkpoints, sprint state persistence (Sprint 2)
 - [x] mcp-project-bootstrap: Raptor MCP server with bootstrap_project, list_projects, and get_project_status tools (Sprint 1)
