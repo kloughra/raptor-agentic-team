@@ -222,18 +222,20 @@ describe("PR description DoD update", () => {
 - [ ] All tests pass
 - [ ] Code committed and pushed
 - [ ] Peer review approved
-- [ ] PO accepted`;
+- [ ] PO accepted
+- [ ] Demo conducted`;
 
     const dod = { codeCommitted: true, testsPass: true, prReviewApproved: true, poAccepted: true, demoCompleted: true };
 
     let updatedBody = prBody;
-    if (dod.testsPass) updatedBody = updatedBody.replace("- [ ] All tests pass", "- [x] All tests pass");
-    if (dod.codeCommitted) updatedBody = updatedBody.replace("- [ ] Code committed and pushed", "- [x] Code committed and pushed");
-    if (dod.prReviewApproved) updatedBody = updatedBody.replace("- [ ] Peer review approved", "- [x] Peer review approved");
-    if (dod.poAccepted) updatedBody = updatedBody.replace("- [ ] PO accepted", "- [x] PO accepted");
+    if (dod.testsPass) updatedBody = updatedBody.replace(/- \[ \] (All tests pass[^\n]*)/, "- [x] $1");
+    if (dod.codeCommitted) updatedBody = updatedBody.replace(/- \[ \] (Code committed[^\n]*)/, "- [x] $1");
+    if (dod.prReviewApproved) updatedBody = updatedBody.replace(/- \[ \] (Peer review[^\n]*)/, "- [x] $1");
+    if (dod.poAccepted) updatedBody = updatedBody.replace(/- \[ \] (PO accepted[^\n]*)/, "- [x] $1");
+    if (dod.demoCompleted) updatedBody = updatedBody.replace(/- \[ \] (Demo[^\n]*)/, "- [x] $1");
 
     expect(updatedBody).not.toContain("- [ ]");
-    expect(updatedBody.match(/- \[x\]/g)).toHaveLength(4);
+    expect(updatedBody.match(/- \[x\]/g)).toHaveLength(5);
   });
 
   it("partial DoD only checks satisfied items", () => {
@@ -241,16 +243,17 @@ describe("PR description DoD update", () => {
 - [ ] All tests pass
 - [ ] Code committed and pushed
 - [ ] Peer review approved
-- [ ] PO accepted`;
+- [ ] PO accepted
+- [ ] Demo conducted`;
 
     const dod = { codeCommitted: true, testsPass: true, prReviewApproved: false, poAccepted: false, demoCompleted: false };
 
     let updatedBody = prBody;
-    if (dod.testsPass) updatedBody = updatedBody.replace("- [ ] All tests pass", "- [x] All tests pass");
-    if (dod.codeCommitted) updatedBody = updatedBody.replace("- [ ] Code committed and pushed", "- [x] Code committed and pushed");
+    if (dod.testsPass) updatedBody = updatedBody.replace(/- \[ \] (All tests pass[^\n]*)/, "- [x] $1");
+    if (dod.codeCommitted) updatedBody = updatedBody.replace(/- \[ \] (Code committed[^\n]*)/, "- [x] $1");
 
     expect(updatedBody.match(/- \[x\]/g)).toHaveLength(2);
-    expect(updatedBody.match(/- \[ \]/g)).toHaveLength(2);
+    expect(updatedBody.match(/- \[ \]/g)).toHaveLength(3);
   });
 
   it("generates DoD summary for merge commit message", () => {

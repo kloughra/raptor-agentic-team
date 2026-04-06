@@ -36,6 +36,15 @@ export interface DodChecklist {
   demoCompleted: boolean;
 }
 
+export interface FeatureState {
+  slug: string;
+  branchName: string | null;
+  status: "pending" | "in-progress" | "complete" | "failed" | "escalated";
+  currentStep: number;
+  steps: StepState[];
+  dod: DodChecklist;
+}
+
 export interface SprintState {
   project: string;
   sprint: number;
@@ -46,6 +55,7 @@ export interface SprintState {
   checkpoints: CheckpointState[];
   dod: DodChecklist;
   retroProposals: unknown[] | null;
+  features?: FeatureState[] | null;
 }
 
 function resolveRaptorHome(): string {
@@ -82,6 +92,7 @@ export function loadSprintState(
       demoCompleted: false,
     };
     state.retroProposals = state.retroProposals ?? null;
+    state.features = state.features ?? null;
     for (const step of state.steps) {
       step.attempts = step.attempts ?? 0;
       step.failures = step.failures ?? [];
@@ -124,6 +135,7 @@ export function createInitialState(
       demoCompleted: false,
     },
     retroProposals: null,
+    features: null,
     steps: steps.map((s) => ({
       step: s.step,
       role: s.role,

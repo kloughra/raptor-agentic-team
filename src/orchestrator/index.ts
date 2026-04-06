@@ -25,4 +25,12 @@ export { generateSprintSummary, loadSprintSummaries } from "./summary";
 export { buildRetroPrompt, parseRetroProposal, generateRetroDocument, updateRetroDocWithDecisions, applyImprovements, buildSprintContextForRetro, parseRetroSelection } from "./retro";
 export type { RetroProposal } from "./retro";
 
-export type { DodChecklist } from "./state";
+export type { DodChecklist, FeatureState } from "./state";
+
+export { executeParallelSteps, detectParallelGroups, isParallelStep, aggregateParallelResults } from "./parallel";
+export type { ParallelStepResult } from "./parallel";
+
+export { detectSprintFeatures, isMultiFeatureSprint, createFeatureStates, featureBranchName, allFeaturesComplete, anyFeaturesEscalated, deriveSprintStatus } from "./multi-runner";
+
+export { DEFAULT_DINO_NAMES, resolveDinoNames, formatRoleDisplay, formatHandoffRole, buildDinoIdentityPreamble } from "./dino";
+export type { DinoIdentity } from "./dino";

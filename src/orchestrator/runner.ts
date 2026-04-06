@@ -30,6 +30,7 @@ import {
   RetroProposal,
 } from "./retro";
 import { Role } from "./workflow";
+import { resolveDinoNames, formatHandoffRole, DinoIdentity } from "./dino";
 
 export const MAX_RETRY_ATTEMPTS = 3;
 export const ERROR_SUMMARY_MAX_LENGTH = 500;
@@ -228,6 +229,9 @@ export async function runSprintFromStep(
 
   const git = simpleGit(projectPath);
 
+  // Resolve dino names for this sprint run
+  const dinoNames = resolveDinoNames();
+
   // Load cross-sprint context for agent prompts
   const sprintSummaries = loadSprintSummaries(projectPath);
 
@@ -297,7 +301,7 @@ export async function runSprintFromStep(
       if (handoff) {
         try {
           await git.commit(
-            `[HANDOFF] ${handoff.from.toUpperCase()} -> ${handoff.to.toUpperCase()}: ${handoff.artifact} for ${featureSlug}`,
+            `[HANDOFF] ${formatHandoffRole(handoff.from, dinoNames)} -> ${formatHandoffRole(handoff.to, dinoNames)}: ${handoff.artifact} for ${featureSlug}`,
             { "--allow-empty": null }
           );
         } catch { /* Non-critical */ }
@@ -411,7 +415,7 @@ export async function runSprintFromStep(
               (f) => `Attempt ${f.attempt}: ${f.errorSummary}`
             ).join("; ");
             await git.commit(
-              `[ESCALATE] Engineer: step ${step.step} (${step.name}) failed ${stepState.attempts} times — requesting user intervention.\nSummary: ${summary}`,
+              `[ESCALATE] ${formatHandoffRole("engineer", dinoNames)}: step ${step.step} (${step.name}) failed ${stepState.attempts} times — requesting user intervention.\nSummary: ${summary}`,
               { "--allow-empty": null }
             );
           } catch {
@@ -442,7 +446,7 @@ export async function runSprintFromStep(
       if (handoff) {
         try {
           await git.commit(
-            `[HANDOFF] ${handoff.from.toUpperCase()} -> ${handoff.to.toUpperCase()}: ${handoff.artifact} for ${featureSlug}`,
+            `[HANDOFF] ${formatHandoffRole(handoff.from, dinoNames)} -> ${formatHandoffRole(handoff.to, dinoNames)}: ${handoff.artifact} for ${featureSlug}`,
             { "--allow-empty": null }
           );
         } catch {
@@ -513,7 +517,7 @@ export async function runSprintFromStep(
         // Create escalation commit
         try {
           await git.commit(
-            `[ESCALATE] ${step.role.toUpperCase()}: step ${step.step} (${step.name}) — agent raised [BLOCKER]: ${truncateErrorSummary(result.output)}`,
+            `[ESCALATE] ${formatHandoffRole(step.role, dinoNames)}: step ${step.step} (${step.name}) — agent raised [BLOCKER]: ${truncateErrorSummary(result.output)}`,
             { "--allow-empty": null }
           );
         } catch {
@@ -555,7 +559,7 @@ export async function runSprintFromStep(
           (f) => `Attempt ${f.attempt}: ${f.errorSummary}`
         ).join("; ");
         await git.commit(
-          `[ESCALATE] ${step.role.toUpperCase()}: step ${step.step} (${step.name}) failed ${stepState.attempts} times — requesting user intervention.\nSummary: ${summary}`,
+          `[ESCALATE] ${formatHandoffRole(step.role, dinoNames)}: step ${step.step} (${step.name}) failed ${stepState.attempts} times — requesting user intervention.\nSummary: ${summary}`,
           { "--allow-empty": null }
         );
       } catch {
@@ -595,7 +599,7 @@ export async function runSprintFromStep(
     if (handoff && step.step < 10) {
       try {
         await git.commit(
-          `[HANDOFF] ${handoff.from.toUpperCase()} -> ${handoff.to.toUpperCase()}: ${handoff.artifact} for ${featureSlug}`,
+          `[HANDOFF] ${formatHandoffRole(handoff.from, dinoNames)} -> ${formatHandoffRole(handoff.to, dinoNames)}: ${handoff.artifact} for ${featureSlug}`,
           { "--allow-empty": null }
         );
       } catch {

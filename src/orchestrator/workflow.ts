@@ -17,6 +17,7 @@ export interface WorkflowStep {
   checkpointAfter?: CheckpointType;
   inputArtifacts: string[];
   expectedOutputs: string[];
+  parallelWith?: number;  // step number this step runs in parallel with
 }
 
 /**

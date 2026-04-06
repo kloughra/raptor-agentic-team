@@ -5,6 +5,7 @@ import * as os from "os";
 export interface RaptorConfig {
   projectsBaseDir: string;
   teamTemplatePath: string | null;
+  dinoNames?: Partial<Record<string, { species?: string; nickname?: string; emoji?: string }>>;
 }
 
 const DEFAULT_PROJECTS_BASE_DIR = path.join(os.homedir(), "workspace");
@@ -27,6 +28,7 @@ export function loadConfig(configPath: string): RaptorConfig {
       ? resolveHome(parsed.projectsBaseDir)
       : defaults.projectsBaseDir,
     teamTemplatePath: parsed.teamTemplatePath ?? null,
+    dinoNames: parsed.dinoNames ?? undefined,
   };
 }
 
