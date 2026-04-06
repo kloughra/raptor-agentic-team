@@ -1,5 +1,7 @@
-import { SprintState } from "./state";
+import { SprintState, FeatureState } from "./state";
 import { MAX_RETRY_ATTEMPTS } from "./runner";
+import { Role } from "./workflow";
+import { DinoIdentity, resolveDinoNames, formatRoleDisplay } from "./dino";
 
 const STATUS_ICONS: Record<string, string> = {
   complete: "✅",
@@ -9,8 +11,12 @@ const STATUS_ICONS: Record<string, string> = {
   escalated: "🚨",
 };
 
-export function renderProgressTable(state: SprintState): string {
+export function renderProgressTable(
+  state: SprintState,
+  dinoNames?: Record<Role, DinoIdentity>
+): string {
   const lines: string[] = [];
+  const names = dinoNames || resolveDinoNames();
 
   lines.push(`## 🦖 Sprint ${state.sprint} — ${state.project}`);
   lines.push("");
@@ -28,8 +34,10 @@ export function renderProgressTable(state: SprintState): string {
       statusDisplay = STATUS_ICONS[step.status] || "⬜";
     }
 
+    const roleDisplay = formatRoleDisplay(step.role as Role, names);
+
     lines.push(
-      `| ${step.step} | ${capitalizeRole(step.role)} | ${step.name} | ${statusDisplay} |`
+      `| ${step.step} | ${roleDisplay} | ${step.name} | ${statusDisplay} |`
     );
   }
 
@@ -68,6 +76,43 @@ export function renderProgressTable(state: SprintState): string {
     lines.push(`### Definition of Done ${allSatisfied ? "✅" : "🔄"}`);
     for (const item of dodItems) {
       lines.push(`- [${item.value ? "x" : " "}] ${item.label}`);
+    }
+  }
+
+  // Multi-feature progress (if applicable)
+  if (state.features && state.features.length > 0) {
+    lines.push("");
+    lines.push("### Per-Feature Progress");
+    for (const feature of state.features) {
+      lines.push("");
+      lines.push(`#### Feature: ${feature.slug} — ${STATUS_ICONS[feature.status] || "⬜"}`);
+      lines.push("| Step | Role | Task | Status |");
+      lines.push("|------|------|------|--------|");
+      for (const step of feature.steps) {
+        let statusDisplay: string;
+        if (step.status === "escalated") {
+          statusDisplay = `🚨 escalated (${step.attempts}/${MAX_RETRY_ATTEMPTS})`;
+        } else if (step.status === "in-progress" && step.attempts > 1) {
+          statusDisplay = `⚠ attempt ${step.attempts}/${MAX_RETRY_ATTEMPTS}`;
+        } else {
+          statusDisplay = STATUS_ICONS[step.status] || "⬜";
+        }
+        const roleDisplay = formatRoleDisplay(step.role as Role, names);
+        lines.push(`| ${step.step} | ${roleDisplay} | ${step.name} | ${statusDisplay} |`);
+      }
+
+      // Per-feature DoD
+      if (feature.dod) {
+        const dodItems = [
+          { label: "Tests pass", value: feature.dod.testsPass },
+          { label: "Code committed", value: feature.dod.codeCommitted },
+          { label: "Peer review approved", value: feature.dod.prReviewApproved },
+          { label: "PO accepted", value: feature.dod.poAccepted },
+          { label: "Demo completed", value: feature.dod.demoCompleted },
+        ];
+        const allSatisfied = dodItems.every((i) => i.value);
+        lines.push(`DoD: ${allSatisfied ? "✅" : "🔄"} ${dodItems.filter((i) => i.value).length}/${dodItems.length}`);
+      }
     }
   }
 
