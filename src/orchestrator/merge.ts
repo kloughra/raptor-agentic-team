@@ -189,11 +189,18 @@ export async function updatePrDodChecklist(
           return;
         }
 
-        // Replace DoD checklist items
-        if (dod.testsPass) body = body.replace("- [ ] All tests pass", "- [x] All tests pass");
-        if (dod.codeCommitted) body = body.replace("- [ ] Code committed and pushed", "- [x] Code committed and pushed");
-        if (dod.prReviewApproved) body = body.replace("- [ ] Peer review approved", "- [x] Peer review approved");
-        if (dod.poAccepted) body = body.replace("- [ ] PO accepted", "- [x] PO accepted");
+        // Replace DoD checklist items — match flexibly with regex
+        const dodReplacements: Array<{ flag: boolean; pattern: RegExp; checked: string }> = [
+          { flag: dod.testsPass, pattern: /- \[ \] (All tests pass[^\n]*)/g, checked: "- [x] $1" },
+          { flag: dod.codeCommitted, pattern: /- \[ \] (Code committed[^\n]*)/g, checked: "- [x] $1" },
+          { flag: dod.prReviewApproved, pattern: /- \[ \] (Peer review[^\n]*)/g, checked: "- [x] $1" },
+          { flag: dod.poAccepted, pattern: /- \[ \] (PO accepted[^\n]*)/g, checked: "- [x] $1" },
+          { flag: dod.demoCompleted, pattern: /- \[ \] (Demo[^\n]*)/g, checked: "- [x] $1" },
+        ];
+
+        for (const { flag, pattern, checked } of dodReplacements) {
+          if (flag) body = body.replace(pattern, checked);
+        }
 
         // Update the PR
         execFile(
