@@ -18,7 +18,7 @@ describe("loadConfig", () => {
   it("returns defaults when config file does not exist", () => {
     const config = loadConfig(path.join(tmpDir, "nonexistent.json"));
     expect(config.projectsBaseDir).toBe(
-      path.join(os.homedir(), "projects")
+      path.join(os.homedir(), "workspace")
     );
     expect(config.teamTemplatePath).toBeNull();
   });
@@ -50,7 +50,7 @@ describe("loadConfig", () => {
     fs.writeFileSync(configPath, JSON.stringify({}));
     const config = loadConfig(configPath);
     expect(config.projectsBaseDir).toBe(
-      path.join(os.homedir(), "projects")
+      path.join(os.homedir(), "workspace")
     );
   });
 

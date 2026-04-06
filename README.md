@@ -86,10 +86,10 @@ Raptor uses `~/.raptor/` for its config and project registry. You can customize 
 
 ```bash
 mkdir -p ~/.raptor
-echo '{ "projectsBaseDir": "~/projects" }' > ~/.raptor/config.json
+echo '{ "projectsBaseDir": "~/workspace" }' > ~/.raptor/config.json
 ```
 
-If no config file exists, Raptor defaults to `~/projects`.
+If no config file exists, Raptor defaults to `~/workspace`.
 
 ### Run Tests
 

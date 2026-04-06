@@ -65,7 +65,7 @@ async function main() {
         .string()
         .optional()
         .describe(
-          "Directory where the project folder will be created (e.g. '/Users/me/projects'). Defaults to ~/projects if not specified."
+          "Directory where the project folder will be created (e.g. '/Users/me/workspace'). Defaults to ~/workspace if not specified."
         ),
       featureIdeas: z
         .array(z.string())
