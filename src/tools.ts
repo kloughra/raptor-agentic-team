@@ -24,6 +24,7 @@ import {
   renderProgressTable,
 } from "./orchestrator";
 import { loadSprintSummaries } from "./orchestrator/summary";
+import { resolveDinoNames } from "./orchestrator/dino";
 
 const PROJECT_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
 
@@ -281,6 +282,7 @@ export async function getProjectStatus(
     orchestrator: orchestratorState,
     orchestratorProgress,
     sprintSummariesCount,
+    dinoNames: resolveDinoNames(),
   };
 }
 

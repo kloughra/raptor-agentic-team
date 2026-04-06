@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Role, SPRINT_WORKFLOW } from "./workflow";
+import { DinoIdentity, resolveDinoNames, buildDinoIdentityPreamble } from "./dino";
 
 /**
  * Role descriptions extracted from TEAM.md structure.
@@ -102,8 +103,10 @@ Walk through:
 5. Request feedback from the user`,
 };
 
-export function buildRolePrompt(role: Role): string {
-  return ROLE_PROMPTS[role];
+export function buildRolePrompt(role: Role, dinoNames?: Record<Role, DinoIdentity>): string {
+  const names = dinoNames || resolveDinoNames();
+  const preamble = buildDinoIdentityPreamble(role, names);
+  return `${preamble}\n\n${ROLE_PROMPTS[role]}`;
 }
 
 /**
