@@ -6,7 +6,7 @@ export type CheckpointType =
   | "pr-review"
   | "demo-feedback";
 
-export type StepStatus = "pending" | "in-progress" | "complete" | "failed";
+export type StepStatus = "pending" | "in-progress" | "complete" | "failed" | "escalated";
 
 export interface WorkflowStep {
   step: number;
@@ -110,6 +110,15 @@ export const SPRINT_WORKFLOW: WorkflowStep[] = [
   },
   {
     step: 9,
+    role: "engineer",
+    name: "Merge PR",
+    description:
+      "Squash-merge the sprint PR after all approvals are in",
+    inputArtifacts: [],
+    expectedOutputs: [],
+  },
+  {
+    step: 10,
     role: "po",
     name: "Process feedback",
     description:
@@ -130,5 +139,6 @@ export const HANDOFF_MAP: Record<number, { from: Role; to: Role; artifact: strin
   5: { from: "engineer", to: "engineer", artifact: "implementation" },
   6: { from: "engineer", to: "qa", artifact: "PR for review" },
   7: { from: "qa", to: "team", artifact: "test results" },
-  8: { from: "team", to: "po", artifact: "demo feedback" },
+  8: { from: "team", to: "engineer", artifact: "demo approval" },
+  9: { from: "engineer", to: "po", artifact: "merged PR" },
 };

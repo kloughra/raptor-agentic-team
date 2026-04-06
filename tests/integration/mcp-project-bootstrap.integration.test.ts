@@ -97,7 +97,7 @@ describe("Config", () => {
 
   it("uses defaults when config file does not exist", async () => {
     const config = loadConfig(path.join(raptorHome, "config.json"));
-    expect(config.projectsBaseDir).toContain("projects");
+    expect(config.projectsBaseDir).toContain("workspace");
   });
 });
 
@@ -382,7 +382,7 @@ describe("Server Startup", () => {
     const configPath = path.join(raptorHome, "config.json");
     expect(fs.existsSync(configPath)).toBe(false);
     const config = loadConfig(configPath);
-    expect(config.projectsBaseDir).toContain("projects");
+    expect(config.projectsBaseDir).toContain("workspace");
   });
 
   it("fails to start when TEAM.md template is missing", async () => {

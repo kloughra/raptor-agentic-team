@@ -7,7 +7,7 @@ export interface RaptorConfig {
   teamTemplatePath: string | null;
 }
 
-const DEFAULT_PROJECTS_BASE_DIR = path.join(os.homedir(), "projects");
+const DEFAULT_PROJECTS_BASE_DIR = path.join(os.homedir(), "workspace");
 
 export function loadConfig(configPath: string): RaptorConfig {
   const defaults: RaptorConfig = {

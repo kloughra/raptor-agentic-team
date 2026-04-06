@@ -205,7 +205,7 @@ Feature: Raptor — Project Bootstrap
     Given no config file exists at "~/.raptor/config.json"
     And the bundled TEAM.md template is present
     When Raptor starts
-    Then it should use "~/projects" as the default projectsBaseDir
+    Then it should use "~/workspace" as the default projectsBaseDir
     And it should be ready to accept tool calls
 
   Scenario: Server fails to start when TEAM.md template is missing

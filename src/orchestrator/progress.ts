@@ -1,10 +1,12 @@
 import { SprintState } from "./state";
+import { MAX_RETRY_ATTEMPTS } from "./runner";
 
 const STATUS_ICONS: Record<string, string> = {
   complete: "✅",
   "in-progress": "🔄",
   pending: "⬜",
   failed: "❌",
+  escalated: "🚨",
 };
 
 export function renderProgressTable(state: SprintState): string {
@@ -16,9 +18,18 @@ export function renderProgressTable(state: SprintState): string {
   lines.push("|------|------|------|--------|");
 
   for (const step of state.steps) {
-    const icon = STATUS_ICONS[step.status] || "⬜";
+    let statusDisplay: string;
+
+    if (step.status === "escalated") {
+      statusDisplay = `🚨 escalated (${step.attempts}/${MAX_RETRY_ATTEMPTS})`;
+    } else if (step.status === "in-progress" && step.attempts > 1) {
+      statusDisplay = `⚠ attempt ${step.attempts}/${MAX_RETRY_ATTEMPTS}`;
+    } else {
+      statusDisplay = STATUS_ICONS[step.status] || "⬜";
+    }
+
     lines.push(
-      `| ${step.step} | ${capitalizeRole(step.role)} | ${step.name} | ${icon} |`
+      `| ${step.step} | ${capitalizeRole(step.role)} | ${step.name} | ${statusDisplay} |`
     );
   }
 
@@ -31,6 +42,11 @@ export function renderProgressTable(state: SprintState): string {
       lines.push("");
       lines.push(`**Paused at checkpoint: ${pendingCheckpoint.type}** — awaiting user input`);
     }
+  }
+
+  if (state.status === "escalated") {
+    lines.push("");
+    lines.push("**Sprint escalated** 🚨 — awaiting user intervention");
   }
 
   if (state.status === "complete") {
