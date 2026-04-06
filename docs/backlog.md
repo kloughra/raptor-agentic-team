@@ -3,6 +3,7 @@
 ## Sprint 4 — In Progress
 - [ ] cross-sprint-context: Sprint summary artifacts generated after each sprint, fed as context to future sprint agents
 - [ ] agent-retrospective-improvements: Each role proposes TEAM.md improvements; user reviews at new retro checkpoint; adopted changes applied
+- [ ] dod-checklist-tracking: Track Definition of Done checklist in sprint state and update PR description before merge to reflect all items satisfied
 
 ## Ready (prioritized, next sprint)
 - agent-parallel-execution: Parallel agent execution where TEAM.md allows it (Architect + QA partial parallel, Architect review + QA test run)
