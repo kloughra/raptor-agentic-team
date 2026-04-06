@@ -3,6 +3,13 @@ import * as path from "path";
 import * as os from "os";
 import { CheckpointType, StepStatus } from "./workflow";
 
+export interface FailureRecord {
+  attempt: number;
+  errorSummary: string;
+  timestamp: string;
+  hadPartialArtifacts: boolean;
+}
+
 export interface StepState {
   step: number;
   role: string;
@@ -10,6 +17,8 @@ export interface StepState {
   status: StepStatus;
   artifacts: string[];
   completedAt: string | null;
+  attempts: number;
+  failures: FailureRecord[];
 }
 
 export interface CheckpointState {
@@ -22,8 +31,9 @@ export interface CheckpointState {
 export interface SprintState {
   project: string;
   sprint: number;
-  status: "in-progress" | "paused" | "complete" | "failed";
+  status: "in-progress" | "paused" | "complete" | "failed" | "escalated";
   currentStep: number;
+  branchName: string | null;
   steps: StepState[];
   checkpoints: CheckpointState[];
 }
@@ -48,8 +58,21 @@ export function loadSprintState(
   if (!fs.existsSync(filePath)) {
     return null;
   }
-  const content = fs.readFileSync(filePath, "utf-8");
-  return JSON.parse(content) as SprintState;
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    const state = JSON.parse(content) as SprintState;
+
+    // Backward compatibility: default missing fields
+    state.branchName = state.branchName ?? null;
+    for (const step of state.steps) {
+      step.attempts = step.attempts ?? 0;
+      step.failures = step.failures ?? [];
+    }
+
+    return state;
+  } catch {
+    return null;
+  }
 }
 
 export function saveSprintState(
@@ -66,13 +89,15 @@ export function saveSprintState(
 export function createInitialState(
   project: string,
   sprint: number,
-  steps: { step: number; role: string; name: string }[]
+  steps: { step: number; role: string; name: string }[],
+  branchName?: string | null
 ): SprintState {
   return {
     project,
     sprint,
     status: "in-progress",
     currentStep: 1,
+    branchName: branchName ?? null,
     steps: steps.map((s) => ({
       step: s.step,
       role: s.role,
@@ -80,6 +105,8 @@ export function createInitialState(
       status: "pending" as StepStatus,
       artifacts: [],
       completedAt: null,
+      attempts: 0,
+      failures: [],
     })),
     checkpoints: [],
   };

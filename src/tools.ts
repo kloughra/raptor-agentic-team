@@ -228,11 +228,14 @@ export async function getProjectStatus(
       orchestratorState = {
         status: sprintState.status,
         currentStep: sprintState.currentStep,
+        branchName: sprintState.branchName,
         steps: sprintState.steps.map((s) => ({
           step: s.step,
           role: s.role,
           name: s.name,
           status: s.status,
+          attempts: s.attempts,
+          failures: s.failures,
         })),
         checkpoints: sprintState.checkpoints,
       };
@@ -240,11 +243,17 @@ export async function getProjectStatus(
     }
   }
 
+  // Determine if the sprint PR has been merged
+  const merged = orchestratorState?.steps.some(
+    (s: { name: string; status: string }) => s.name === "Merge PR" && s.status === "complete"
+  ) ?? false;
+
   return {
     status: "success",
     project: args.name,
     sprint: {
       current: sprintNumber,
+      merged,
       items: backlogSections.sprint.items.map((item) => {
         const parts = item.split(":");
         const slug = parts[0].trim();
