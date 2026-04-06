@@ -54,6 +54,23 @@ export function renderProgressTable(state: SprintState): string {
     lines.push("**Sprint complete** ✅");
   }
 
+  // DoD checklist summary
+  if (state.dod) {
+    const dodItems = [
+      { label: "Tests pass", value: state.dod.testsPass },
+      { label: "Code committed", value: state.dod.codeCommitted },
+      { label: "Peer review approved", value: state.dod.prReviewApproved },
+      { label: "PO accepted", value: state.dod.poAccepted },
+      { label: "Demo completed", value: state.dod.demoCompleted },
+    ];
+    const allSatisfied = dodItems.every((i) => i.value);
+    lines.push("");
+    lines.push(`### Definition of Done ${allSatisfied ? "✅" : "🔄"}`);
+    for (const item of dodItems) {
+      lines.push(`- [${item.value ? "x" : " "}] ${item.label}`);
+    }
+  }
+
   return lines.join("\n");
 }
 

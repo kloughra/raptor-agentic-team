@@ -29,8 +29,13 @@ const CHECKPOINT_CONFIG: Record<
   },
   "demo-feedback": {
     title: "Demo Feedback",
-    nextAction: "complete the sprint",
+    nextAction: "merge the PR and proceed to retrospective",
     feedbackLabel: "Feedback on the demo (optional):",
+  },
+  "retro-review": {
+    title: "Retrospective Review",
+    nextAction: "apply selected improvements and complete the sprint",
+    feedbackLabel: "Enter proposal numbers to adopt (e.g., '1,3'), 'all' to adopt all, or 'skip' to skip:",
   },
 };
 
