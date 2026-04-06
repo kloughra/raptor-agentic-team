@@ -87,6 +87,15 @@ async function bootstrapWithSprint(
 }
 
 /**
+ * Helper: get the default branch name (main or master depending on git config)
+ */
+async function getDefaultBranch(projectPath: string): Promise<string> {
+  const git = simpleGit(projectPath);
+  const branches = await git.branchLocal();
+  return branches.current;
+}
+
+/**
  * Helper: create a sprint branch with a commit, simulating work done during a sprint
  */
 async function createSprintBranch(
@@ -204,9 +213,10 @@ describe("workflow definition with merge step", () => {
 // ─── Local Git Merge ───
 
 describe("local git merge", () => {
-  it("squash-merges a sprint branch into main", async () => {
+  it("squash-merges a sprint branch into the default branch", async () => {
     const projectPath = await bootstrapWithSprint("local-merge", "dashboard: Dashboard widgets");
     const git = simpleGit(projectPath);
+    const defaultBranch = await getDefaultBranch(projectPath);
 
     // Create sprint branch with work
     await createSprintBranch(projectPath, "sprint-1/dashboard");
@@ -216,15 +226,15 @@ describe("local git merge", () => {
     expect(branch).toBe("sprint-1/dashboard");
 
     // Simulate local merge (what the orchestrator would do)
-    await git.checkout("main");
+    await git.checkout(defaultBranch);
     await git.merge(["--squash", "sprint-1/dashboard"]);
     await git.commit("Sprint 1: dashboard — squash-merge by Raptor");
 
     // Verify merge result
     const currentBranch = await git.revparse(["--abbrev-ref", "HEAD"]);
-    expect(currentBranch).toBe("main");
+    expect(currentBranch).toBe(defaultBranch);
 
-    // Verify the spec file exists on main after merge
+    // Verify the spec file exists on default branch after merge
     const specPath = path.join(projectPath, "docs", "specs", "dashboard.md");
     expect(fs.existsSync(specPath)).toBe(true);
 
@@ -237,9 +247,10 @@ describe("local git merge", () => {
   it("merge commit message references feature slug and sprint number", async () => {
     const projectPath = await bootstrapWithSprint("msg-test", "dashboard: Dashboard widgets");
     const git = simpleGit(projectPath);
+    const defaultBranch = await getDefaultBranch(projectPath);
 
     await createSprintBranch(projectPath, "sprint-1/dashboard");
-    await git.checkout("main");
+    await git.checkout(defaultBranch);
     await git.merge(["--squash", "sprint-1/dashboard"]);
 
     const commitMsg = "Sprint 1: dashboard — squash-merge by Raptor";
@@ -254,8 +265,9 @@ describe("local git merge", () => {
   it("detects merge conflicts", async () => {
     const projectPath = await bootstrapWithSprint("conflict-test", "dashboard: Dashboard widgets");
     const git = simpleGit(projectPath);
+    const defaultBranch = await getDefaultBranch(projectPath);
 
-    // Create a file on main
+    // Create a file on default branch
     const conflictFile = path.join(projectPath, "src", "app.ts");
     fs.mkdirSync(path.join(projectPath, "src"), { recursive: true });
     fs.writeFileSync(conflictFile, "// main version\n");
@@ -268,8 +280,8 @@ describe("local git merge", () => {
     await git.add("src/app.ts");
     await git.commit("[ENGINEER] add: dashboard feature");
 
-    // Make a conflicting change on main
-    await git.checkout("main");
+    // Make a conflicting change on default branch
+    await git.checkout(defaultBranch);
     fs.writeFileSync(conflictFile, "// different main version\n");
     await git.add("src/app.ts");
     await git.commit("[ENGINEER] fix: app structure update");
@@ -382,19 +394,20 @@ describe("merge result structure", () => {
 // ─── Post-Merge Behavior ───
 
 describe("post-merge behavior", () => {
-  it("after local merge, working directory is on main", async () => {
+  it("after local merge, working directory is on default branch", async () => {
     const projectPath = await bootstrapWithSprint("post-merge", "dashboard: Dashboard widgets");
     const git = simpleGit(projectPath);
+    const defaultBranch = await getDefaultBranch(projectPath);
 
     await createSprintBranch(projectPath, "sprint-1/dashboard");
 
     // Simulate merge
-    await git.checkout("main");
+    await git.checkout(defaultBranch);
     await git.merge(["--squash", "sprint-1/dashboard"]);
     await git.commit("Sprint 1: dashboard — squash-merge by Raptor");
 
     const currentBranch = await git.revparse(["--abbrev-ref", "HEAD"]);
-    expect(currentBranch).toBe("main");
+    expect(currentBranch).toBe(defaultBranch);
   });
 
   it("sprint status is complete after all 10 steps finish", () => {
