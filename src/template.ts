@@ -8,6 +8,7 @@ export const SCAFFOLD_DIRS = [
   "docs/architecture",
   "docs/adr",
   "docs/demos",
+  "docs/sprints",
   "tests/bdd",
   "tests/integration",
   "tests/performance",

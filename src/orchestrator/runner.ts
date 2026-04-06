@@ -17,7 +17,19 @@ import { renderProgressTable } from "./progress";
 import { buildCheckpointPrompt, CheckpointPrompt } from "./checkpoints";
 import { buildRolePrompt, buildStepContext } from "./prompts";
 import { spawnAgent } from "./agents";
-import { executeMerge } from "./merge";
+import { executeMerge, updatePrDodChecklist } from "./merge";
+import { generateSprintSummary, loadSprintSummaries } from "./summary";
+import {
+  buildRetroPrompt,
+  parseRetroProposal,
+  generateRetroDocument,
+  updateRetroDocWithDecisions,
+  applyImprovements,
+  buildSprintContextForRetro,
+  parseRetroSelection,
+  RetroProposal,
+} from "./retro";
+import { Role } from "./workflow";
 
 export const MAX_RETRY_ATTEMPTS = 3;
 export const ERROR_SUMMARY_MAX_LENGTH = 500;
@@ -216,6 +228,9 @@ export async function runSprintFromStep(
 
   const git = simpleGit(projectPath);
 
+  // Load cross-sprint context for agent prompts
+  const sprintSummaries = loadSprintSummaries(projectPath);
+
   // Execute steps sequentially from fromStep
   for (let i = fromStep - 1; i < SPRINT_WORKFLOW.length; i++) {
     const step = SPRINT_WORKFLOW[i];
@@ -230,8 +245,131 @@ export async function runSprintFromStep(
     state.status = "in-progress";
     saveSprintState(projectSlug, sprint, state);
 
+    // --- Handle Collect retro proposals (step 11) ---
+    if (step.name === "Collect retro proposals") {
+      const teamMdPath = path.join(projectPath, "TEAM.md");
+      const teamMd = fs.existsSync(teamMdPath) ? fs.readFileSync(teamMdPath, "utf-8") : "";
+      const sprintContext = buildSprintContextForRetro(state);
+      const roles: Role[] = ["po", "architect", "qa", "engineer"];
+      const proposals: (RetroProposal | null)[] = [];
+
+      for (const role of roles) {
+        const retroPrompt = buildRetroPrompt(role, teamMd, sprintContext);
+        try {
+          const result = await spawnAgent(
+            role,
+            retroPrompt,
+            "",
+            "Propose one improvement to TEAM.md based on your sprint experience.",
+            projectPath
+          );
+          const proposal = parseRetroProposal(role, result.output);
+          proposals.push(proposal);
+        } catch {
+          proposals.push(null);
+        }
+      }
+
+      // Generate and write retro document
+      const retroDoc = generateRetroDocument(projectSlug, sprint, proposals, roles);
+      const sprintsDir = path.join(projectPath, "docs", "sprints");
+      fs.mkdirSync(sprintsDir, { recursive: true });
+      const retroPath = path.join(sprintsDir, `sprint-${sprint}-retro.md`);
+      fs.writeFileSync(retroPath, retroDoc);
+
+      // Store proposals in state
+      state.retroProposals = proposals.filter((p): p is RetroProposal => p !== null);
+
+      try {
+        await git.add(retroPath);
+        await git.commit(`[PO] add: sprint ${sprint} retrospective proposals`);
+      } catch {
+        // Non-critical
+      }
+
+      stepState.attempts = 1;
+      stepState.status = "complete";
+      stepState.completedAt = new Date().toISOString();
+      saveSprintState(projectSlug, sprint, state);
+
+      // Handoff
+      const handoff = HANDOFF_MAP[step.step];
+      if (handoff) {
+        try {
+          await git.commit(
+            `[HANDOFF] ${handoff.from.toUpperCase()} -> ${handoff.to.toUpperCase()}: ${handoff.artifact} for ${featureSlug}`,
+            { "--allow-empty": null }
+          );
+        } catch { /* Non-critical */ }
+      }
+
+      // Checkpoint is on step 12, not 11 — continue
+      continue;
+    }
+
+    // --- Handle Apply retro improvements (step 13) ---
+    if (step.name === "Apply retro improvements") {
+      const retroFeedback = state.checkpoints.find(
+        (c) => c.type === "retro-review" && (c.status === "approved" || c.status === "changes-requested")
+      );
+      const retroProposals = (state.retroProposals ?? []) as RetroProposal[];
+      const selectedIndices = parseRetroSelection(
+        retroFeedback?.feedback,
+        retroProposals.length
+      );
+
+      if (selectedIndices.length > 0 && retroProposals.length > 0) {
+        const selectedProposals = selectedIndices
+          .map((i) => retroProposals[i - 1])
+          .filter((p): p is RetroProposal => p !== undefined);
+
+        if (selectedProposals.length > 0) {
+          const teamMdPath = path.join(projectPath, "TEAM.md");
+          const teamMd = fs.readFileSync(teamMdPath, "utf-8");
+          const updatedTeamMd = applyImprovements(teamMd, selectedProposals);
+          fs.writeFileSync(teamMdPath, updatedTeamMd);
+
+          try {
+            await git.add(teamMdPath);
+            await git.commit(`[PO] update: apply retrospective improvements from sprint ${sprint}`);
+          } catch { /* Non-critical */ }
+        }
+      }
+
+      // Update retro doc with decisions
+      const retroPath = path.join(projectPath, "docs", "sprints", `sprint-${sprint}-retro.md`);
+      if (fs.existsSync(retroPath)) {
+        const retroDoc = fs.readFileSync(retroPath, "utf-8");
+        const updatedRetroDoc = updateRetroDocWithDecisions(
+          retroDoc,
+          selectedIndices,
+          retroProposals.length
+        );
+        fs.writeFileSync(retroPath, updatedRetroDoc);
+        try {
+          await git.add(retroPath);
+          await git.commit(`[PO] update: sprint ${sprint} retro decisions recorded`);
+        } catch { /* Non-critical */ }
+      }
+
+      stepState.attempts = 1;
+      stepState.status = "complete";
+      stepState.completedAt = new Date().toISOString();
+      saveSprintState(projectSlug, sprint, state);
+
+      // Continue — will hit the "All steps complete" block
+      continue;
+    }
+
     // --- Handle Merge PR step directly (no subagent) ---
     if (step.name === "Merge PR") {
+      // Update PR DoD checklist before merge
+      try {
+        await updatePrDodChecklist(projectPath, state.dod);
+      } catch {
+        // Best-effort — don't block merge
+      }
+
       const branchName = state.branchName;
       if (!branchName) {
         stepState.status = "failed";
@@ -325,6 +463,11 @@ export async function runSprintFromStep(
       // Build prompts and context
       const systemPrompt = buildRolePrompt(step.role);
       let context = buildStepContext(step.step, projectPath, featureSlug);
+
+      // Inject cross-sprint context if available
+      if (sprintSummaries) {
+        context = `--- Previous Sprint Context ---\n${sprintSummaries}\n\n--- Current Sprint Artifacts ---\n${context}`;
+      }
 
       // Add user feedback on first attempt if provided
       const taskDesc = buildTaskDescription(
@@ -435,6 +578,16 @@ export async function runSprintFromStep(
 
     stepState.status = "complete";
     stepState.completedAt = new Date().toISOString();
+
+    // --- Update DoD fields based on completed step ---
+    if (step.name === "Open PR") {
+      state.dod.codeCommitted = true;
+    } else if (step.name === "Run test suite") {
+      state.dod.testsPass = true;
+    } else if (step.name === "Demo") {
+      state.dod.demoCompleted = true;
+    }
+
     saveSprintState(projectSlug, sprint, state);
 
     // Create handoff commit if applicable
@@ -481,7 +634,24 @@ export async function runSprintFromStep(
     }
   }
 
-  // All steps complete
+  // All steps complete — generate sprint summary
+  try {
+    const summary = generateSprintSummary(projectPath, projectSlug, sprint, state);
+    const sprintsDir = path.join(projectPath, "docs", "sprints");
+    fs.mkdirSync(sprintsDir, { recursive: true });
+    const summaryPath = path.join(sprintsDir, `sprint-${sprint}-summary.md`);
+    fs.writeFileSync(summaryPath, summary);
+
+    try {
+      await git.add(summaryPath);
+      await git.commit(`[PO] add: sprint ${sprint} summary for cross-sprint context`);
+    } catch {
+      // Non-critical
+    }
+  } catch {
+    // Summary generation is best-effort
+  }
+
   state.status = "complete";
   saveSprintState(projectSlug, sprint, state);
 
@@ -531,6 +701,14 @@ export async function resumeSprint(
       pendingCheckpoint.status = "approved";
       pendingCheckpoint.feedback = feedback || null;
       pendingCheckpoint.resolvedAt = new Date().toISOString();
+
+      // Update DoD fields based on checkpoint type
+      if (pendingCheckpoint.type === "pr-review") {
+        state.dod.prReviewApproved = true;
+      } else if (pendingCheckpoint.type === "demo-feedback") {
+        state.dod.poAccepted = true;
+      }
+
       saveSprintState(projectSlug, sprint, state);
 
       return runSprintFromStep(

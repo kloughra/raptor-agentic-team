@@ -23,6 +23,7 @@ import {
   loadSprintState,
   renderProgressTable,
 } from "./orchestrator";
+import { loadSprintSummaries } from "./orchestrator/summary";
 
 const PROJECT_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
 
@@ -229,6 +230,7 @@ export async function getProjectStatus(
         status: sprintState.status,
         currentStep: sprintState.currentStep,
         branchName: sprintState.branchName,
+        dod: sprintState.dod,
         steps: sprintState.steps.map((s) => ({
           step: s.step,
           role: s.role,
@@ -241,6 +243,18 @@ export async function getProjectStatus(
       };
       orchestratorProgress = renderProgressTable(sprintState);
     }
+  }
+
+  // Count sprint summaries for cross-sprint context info
+  let sprintSummariesCount = 0;
+  try {
+    const sprintsDir = path.join(project.path, "docs", "sprints");
+    if (fs.existsSync(sprintsDir)) {
+      sprintSummariesCount = fs.readdirSync(sprintsDir)
+        .filter((f: string) => /^sprint-\d+-summary\.md$/.test(f)).length;
+    }
+  } catch {
+    // Best effort
   }
 
   // Determine if the sprint PR has been merged
@@ -266,6 +280,7 @@ export async function getProjectStatus(
     escalations,
     orchestrator: orchestratorState,
     orchestratorProgress,
+    sprintSummariesCount,
   };
 }
 

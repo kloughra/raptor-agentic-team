@@ -4,7 +4,8 @@ export type CheckpointType =
   | "spec-review"
   | "tech-approval"
   | "pr-review"
-  | "demo-feedback";
+  | "demo-feedback"
+  | "retro-review";
 
 export type StepStatus = "pending" | "in-progress" | "complete" | "failed" | "escalated";
 
@@ -126,6 +127,34 @@ export const SPRINT_WORKFLOW: WorkflowStep[] = [
     inputArtifacts: ["docs/backlog.md"],
     expectedOutputs: ["docs/backlog.md"],
   },
+  {
+    step: 11,
+    role: "team",
+    name: "Collect retro proposals",
+    description:
+      "Each role proposes one TEAM.md improvement based on their sprint experience",
+    inputArtifacts: ["TEAM.md"],
+    expectedOutputs: ["docs/sprints/*.md"],
+  },
+  {
+    step: 12,
+    role: "team",
+    name: "Review retro proposals",
+    description:
+      "User reviews all proposals and selects which improvements to adopt",
+    checkpointAfter: "retro-review",
+    inputArtifacts: ["docs/sprints/*.md"],
+    expectedOutputs: [],
+  },
+  {
+    step: 13,
+    role: "po",
+    name: "Apply retro improvements",
+    description:
+      "Apply selected TEAM.md improvements and finalize the sprint",
+    inputArtifacts: ["TEAM.md", "docs/sprints/*.md"],
+    expectedOutputs: ["TEAM.md"],
+  },
 ];
 
 /**
@@ -141,4 +170,7 @@ export const HANDOFF_MAP: Record<number, { from: Role; to: Role; artifact: strin
   7: { from: "qa", to: "team", artifact: "test results" },
   8: { from: "team", to: "engineer", artifact: "demo approval" },
   9: { from: "engineer", to: "po", artifact: "merged PR" },
+  10: { from: "po", to: "team", artifact: "feedback processed" },
+  11: { from: "team", to: "team", artifact: "retro proposals" },
+  12: { from: "team", to: "po", artifact: "retro selections" },
 };
