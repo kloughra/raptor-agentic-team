@@ -1,8 +1,8 @@
 # Backlog
 
-## Sprint 4 — Planned
-- cross-sprint-context: Cross-sprint memory and context passing between agent sessions — sprint summary artifacts as input to future sprints
-- agent-retrospective-improvements: Each agent proposes a TEAM.md improvement after their step; user checkpoint to review and select; retro doc in sprint workspace
+## Sprint 4 — In Progress
+- [ ] cross-sprint-context: Sprint summary artifacts generated after each sprint, fed as context to future sprint agents
+- [ ] agent-retrospective-improvements: Each role proposes TEAM.md improvements; user reviews at new retro checkpoint; adopted changes applied
 
 ## Ready (prioritized, next sprint)
 - agent-parallel-execution: Parallel agent execution where TEAM.md allows it (Architect + QA partial parallel, Architect review + QA test run)
