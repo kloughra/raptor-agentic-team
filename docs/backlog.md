@@ -1,11 +1,9 @@
 # Backlog
 
-## Sprint 7 — Planned
-- [ ] codebase-aware-agent-context: Agents in Sprint 2+ should see what was built in prior sprints — not just high-level summaries but actual file contents and structure. Feed codebase layout and key file excerpts into agent context.
-- [ ] read-before-write-enforcement: Verify that agents actually read all input artifacts before producing output. Add a structured discovery phase before generation, with validation that required files were accessed.
-- [ ] progressive-retry-with-scope-narrowing: When a step fails twice, third attempt gets narrower scope (split oversized tasks into sub-tasks) rather than retrying identical prompt
-
 ## Ready (prioritized, next sprint)
+- hotfix-workflow-tool: Add a `run_hotfix` MCP tool that enforces a lightweight SDLC: create hotfix branch → implement + test → PR → user approval → merge. Tracked in sprint state like a mini-sprint. Prevents untracked code changes.
+- pre-flight-branch-check: Before any agent writes code, verify it's on a tracked branch (sprint or hotfix). If on main, refuse to proceed and prompt for branch creation. Enforced in `spawnAgent` and runner loop.
+- change-proposal-tool: Add a `propose_change` MCP tool that creates a backlog entry and routes to the correct workflow (sprint vs hotfix) based on scope. Forces all changes through tracking before any code is written.
 - resource-aware-agent-scheduling: Add concurrency limits to parallel agent execution. Cap parallelism (e.g., max 2 agents) or detect CPU contention and queue excess agents
 - checkpoint-resume-for-subagents: Pre-summarize completed discovery work so retries skip re-reading all specs and jump straight to generation
 
@@ -19,6 +17,9 @@
 - multi-device-sync: Sync project state across devices — source: user request
 
 ## Done
+- [x] codebase-aware-agent-context: Codebase snapshot (tree, exports, excerpts, deps) injected into agent prompts per step. 30KB cap, .gitignore-aware (Sprint 7)
+- [x] read-before-write-enforcement: Required artifacts read from disk and injected into agent task descriptions with pre-generation checklist (Sprint 7)
+- [x] progressive-retry-with-scope-narrowing: 3rd retry auto-decomposes by acceptance criteria (Engineer), scenario group (QA), or component (Architect) (Sprint 7)
 - [x] adopt-existing-project: Register existing repos in Raptor, scaffold only missing pieces, discover project context (Sprint 6)
 - [x] agent-timeout-scaling-by-step-type: Step-aware timeout scaling — QA 15min, Engineer 10min, Architect 7min, configurable cascade (Sprint 6)
 - [x] scoped-test-execution: Feature-scoped test commands during implementation, full suite at review only, framework auto-detection (Sprint 6)
