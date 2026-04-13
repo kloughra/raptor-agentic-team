@@ -22,6 +22,27 @@ Development follows the structured BDD/TDD sprint workflow defined in TEAM.md. K
 
 Artifacts follow strict conventions — feature slug is the canonical ID used across specs (`docs/specs/{slug}.md`), architecture (`docs/architecture/{slug}.md`), tests (`tests/bdd/{slug}.feature`), etc. See TEAM.md for templates and the full artifact directory map.
 
+## ⛔ No Code Without Process
+
+**CRITICAL: Never write, modify, or delete code outside of a tracked workflow.** This applies to ALL code changes, no matter how small or urgent.
+
+Before writing ANY code, verify:
+1. **Am I on a sprint or hotfix branch?** If on `main`, STOP. Create a branch first.
+2. **Is this change tracked?** It must be either a sprint backlog item or a hotfix with a clear scope.
+3. **Have I read the required artifacts?** Spec, architecture, tests — whatever applies to the change.
+
+**Allowed workflows:**
+- **Sprint workflow** (full SDLC): PO spec → Architect design → QA tests → Engineer implement → PR → Review → Demo → Merge. Use for all feature work.
+- **Hotfix workflow** (lightweight SDLC): Create `hotfix/{description}` branch → implement + write tests → PR → user approval → merge. Use for bugs, small enhancements, and process fixes.
+
+**Never acceptable:**
+- Writing code directly on `main`
+- Implementing a feature without at minimum: branch, tests, PR
+- Skipping the process because a change "seems small" or "is urgent"
+- Starting to code before confirming the workflow path with the user
+
+If the user asks for a quick change, respond: "I'll put this through a hotfix workflow — branch, implement, test, PR. Sound good?" Do not start coding until the workflow is confirmed.
+
 ## Build & Test Commands
 
 ```bash
@@ -41,7 +62,7 @@ There is no separate lint or format command configured.
 
 ## Architecture
 
-The MCP server exposes 3 tools over stdio: `bootstrap_project`, `list_projects`, `get_project_status`.
+The MCP server exposes 6 tools over stdio: `bootstrap_project`, `adopt_project`, `list_projects`, `get_project_status`, `run_sprint`, `resume_sprint`.
 
 | Module | Role |
 |--------|------|
