@@ -9,6 +9,11 @@
 (empty — replenish from Inbox during Sprint 5 retro)
 
 ## Inbox (unprioritized)
+- scoped-test-execution: Engineers should only run their own tests during implementation, not the full suite. Full suite runs once after all agents merge. Prevents parallel pytest deadlocks (observed: 26 competing pytest processes ground dora-metrics sprint to a halt, FEAT-H and FEAT-J ran 3hrs instead of ~1hr) — source: OpenStory session post-mortem
+- resource-aware-agent-scheduling: Add concurrency limits to parallel agent execution. When agents share one machine, cap parallelism (e.g., max 2 agents) or detect CPU contention and queue excess agents. Current behavior: all engineers spawn simultaneously regardless of machine capacity — source: OpenStory session post-mortem
+- agent-timeout-scaling-by-step-type: Scale AGENT_TIMEOUT_MS based on step type. QA generation steps (writing BDD + integration + performance tests) need significantly more time/tokens than engineer edit steps. Current flat 5-minute timeout caused 5 consecutive QA agent deaths on financial-planning-app Step 3 before any could finish writing tests — source: OpenStory session post-mortem
+- progressive-retry-with-scope-narrowing: When a step fails twice, the third attempt should get a narrower scope (e.g., split "write all BDD + integration + performance tests" into separate sub-tasks) rather than retrying the identical prompt. Current retry sends the same prompt with error context appended, which doesn't help when the root cause is scope/timeout — source: OpenStory session post-mortem
+- checkpoint-resume-for-subagents: Carry forward partial artifacts across retries more aggressively. Current buildRetryContext reads partial files but the sub-agent still re-reads all specs from scratch. Pre-summarize completed discovery work so retries skip the "read spec → read architecture → identify gaps" phase and jump straight to generation — source: OpenStory session post-mortem
 - mcp-remote-hosting: Host Raptor remotely for multi-device access (laptop, desktop, phone) — source: user request
 - mcp-github-integration: Create GitHub repos and push during bootstrap — source: user request
 - mcp-cicd-setup: Configure CI/CD pipelines in bootstrapped repos — source: user request
