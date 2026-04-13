@@ -120,7 +120,8 @@ function reformatBacklogToRaptor(
     }
 
     // Parse list items
-    const itemMatch = trimmed.match(/^[-*]\s+(?:\[([x ])\]\s+)?(.+)/i);
+    // Match bullet lists (- or *), numbered lists (1.), and checkbox lists
+    const itemMatch = trimmed.match(/^(?:[-*]|\d+\.)\s+(?:\[([x ])\]\s+)?(.+)/i);
     if (itemMatch) {
       const checked = itemMatch[1]?.toLowerCase() === "x";
       const itemText = itemMatch[2].trim();

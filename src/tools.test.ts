@@ -302,6 +302,39 @@ describe("adoptProject — backlog reformatting", () => {
     }
   });
 
+  it("handles numbered list items in existing backlog", async () => {
+    const repoPath = path.join(tmpDir, "numbered-repo");
+    fs.mkdirSync(repoPath, { recursive: true });
+    const git = simpleGit(repoPath);
+    await git.init();
+
+    fs.writeFileSync(
+      path.join(repoPath, "BACKLOG.md"),
+      [
+        "# Roadmap",
+        "",
+        "## Planned",
+        "1. Build user registration",
+        "2. Add email verification",
+        "3. Implement SSO login",
+      ].join("\n")
+    );
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# App");
+    await git.add("-A");
+    await git.commit("initial");
+
+    await adoptProject(ctx, {
+      path: repoPath,
+      name: "numbered-app",
+      description: "Test",
+    });
+
+    const content = fs.readFileSync(path.join(repoPath, "docs", "backlog.md"), "utf-8");
+    expect(content).toContain("Build user registration");
+    expect(content).toContain("Add email verification");
+    expect(content).toContain("Implement SSO login");
+  });
+
   it("does not reformat if docs/backlog.md already exists in Raptor format", async () => {
     const repoPath = path.join(tmpDir, "raptor-format-repo");
     fs.mkdirSync(path.join(repoPath, "docs"), { recursive: true });
