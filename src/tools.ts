@@ -29,6 +29,169 @@ import { discoverProjectContext, generateContextDocument } from "./orchestrator/
 
 const PROJECT_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
 
+/**
+ * Search common locations for an existing backlog file (case-insensitive).
+ * Returns the absolute path if found, null otherwise.
+ */
+function findExistingBacklog(projectPath: string): string | null {
+  const candidateDirs = [
+    path.join(projectPath, "docs"),
+    projectPath,
+  ];
+  const candidateNames = ["backlog.md", "BACKLOG.md", "BACKLOG.MD", "Backlog.md"];
+
+  for (const dir of candidateDirs) {
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
+    try {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        if (candidateNames.includes(file) || file.toLowerCase() === "backlog.md") {
+          return path.join(dir, file);
+        }
+      }
+    } catch {
+      // skip unreadable dirs
+    }
+  }
+  return null;
+}
+
+/**
+ * Reformat an existing backlog's content into Raptor's canonical format.
+ * Preserves all items — categorizes them into Raptor sections.
+ *
+ * Raptor format:
+ *   # Backlog
+ *   ## Sprint N — Planned   (active sprint items)
+ *   ## Ready (prioritized, next sprint)
+ *   ## Inbox (unprioritized)
+ *   ## Done
+ */
+function reformatBacklogToRaptor(
+  existingContent: string,
+  description: string,
+  featureIdeas?: string[]
+): string {
+  const lines = existingContent.split("\n");
+
+  // Collect all items grouped by detected section
+  const sprintItems: string[] = [];
+  const readyItems: string[] = [];
+  const inboxItems: string[] = [];
+  const doneItems: string[] = [];
+  const unmatchedContent: string[] = [];
+
+  let currentSection: "sprint" | "ready" | "inbox" | "done" | "unknown" | null = null;
+  let detectedSprintNumber = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Skip the top-level title
+    if (/^#\s+(backlog|todo|tasks|roadmap)/i.test(trimmed)) continue;
+
+    // Detect section headers (flexible matching)
+    if (/^#{1,3}\s+sprint\s+(\d+)/i.test(trimmed)) {
+      currentSection = "sprint";
+      const m = trimmed.match(/sprint\s+(\d+)/i);
+      if (m) detectedSprintNumber = Math.max(detectedSprintNumber, parseInt(m[1], 10));
+      continue;
+    }
+    if (/^#{1,3}\s*(ready|up\s*next|prioritized|next\s*sprint|planned)/i.test(trimmed)) {
+      currentSection = "ready";
+      continue;
+    }
+    if (/^#{1,3}\s*(inbox|unprioritized|ideas|icebox|someday|backlog items|future)/i.test(trimmed)) {
+      currentSection = "inbox";
+      continue;
+    }
+    if (/^#{1,3}\s*(done|completed|finished|shipped|released|closed)/i.test(trimmed)) {
+      currentSection = "done";
+      continue;
+    }
+    if (/^#{1,3}\s*(in\s*progress|current|active|wip|doing)/i.test(trimmed)) {
+      currentSection = "sprint";
+      continue;
+    }
+    // Any other heading — treat content under it as unknown/inbox
+    if (/^#{1,3}\s+/.test(trimmed)) {
+      currentSection = "unknown";
+      continue;
+    }
+
+    // Parse list items
+    const itemMatch = trimmed.match(/^[-*]\s+(?:\[([x ])\]\s+)?(.+)/i);
+    if (itemMatch) {
+      const checked = itemMatch[1]?.toLowerCase() === "x";
+      const itemText = itemMatch[2].trim();
+      if (itemText.length === 0) continue;
+
+      if (checked) {
+        doneItems.push(`- [x] ${itemText}`);
+      } else if (currentSection === "sprint") {
+        sprintItems.push(`- [ ] ${itemText}`);
+      } else if (currentSection === "ready") {
+        readyItems.push(`- ${itemText}`);
+      } else if (currentSection === "done") {
+        doneItems.push(`- [x] ${itemText}`);
+      } else if (currentSection === "inbox" || currentSection === "unknown") {
+        inboxItems.push(`- ${itemText}`);
+      } else {
+        // No section context — treat as inbox
+        inboxItems.push(`- ${itemText}`);
+      }
+      continue;
+    }
+
+    // Non-list, non-heading content — preserve as-is if non-empty
+    if (trimmed.length > 0 && currentSection !== null) {
+      unmatchedContent.push(trimmed);
+    }
+  }
+
+  // Add feature ideas to inbox if provided
+  const filtered = (featureIdeas ?? []).filter((idea) => idea.trim().length > 0);
+  for (const idea of filtered) {
+    inboxItems.push(`- ${idea.trim()}: (no description yet) — source: project adoption`);
+  }
+
+  // Build Raptor-format backlog
+  const sections: string[] = [];
+  sections.push("# Backlog\n");
+
+  if (sprintItems.length > 0) {
+    const sprintNum = detectedSprintNumber > 0 ? detectedSprintNumber : 1;
+    sections.push(`## Sprint ${sprintNum} — Planned`);
+    sections.push(sprintItems.join("\n"));
+    sections.push("");
+  }
+
+  sections.push("## Ready (prioritized, next sprint)");
+  if (readyItems.length > 0) {
+    sections.push(readyItems.join("\n"));
+  }
+  sections.push("");
+
+  sections.push("## Inbox (unprioritized)");
+  if (inboxItems.length > 0) {
+    sections.push(inboxItems.join("\n"));
+  }
+  if (unmatchedContent.length > 0) {
+    sections.push("");
+    sections.push("<!-- Preserved from original backlog -->");
+    sections.push(unmatchedContent.join("\n"));
+  }
+  sections.push("");
+
+  sections.push("## Done");
+  if (doneItems.length > 0) {
+    sections.push(doneItems.join("\n"));
+  }
+  sections.push("");
+
+  return sections.join("\n");
+}
+
 export interface ToolContext {
   projectsBaseDir: string;
   registry: Registry;
@@ -220,16 +383,45 @@ export async function adoptProject(
     }
   }
 
-  // Scaffold backlog.md — only if missing
+  // Backlog handling: find existing backlog (case-insensitive), reformat if found, scaffold if not
   const backlogPath = path.join(projectPath, "docs", "backlog.md");
-  if (!fs.existsSync(backlogPath)) {
-    // Ensure docs dir exists
+  const existingBacklogPath = findExistingBacklog(projectPath);
+
+  if (existingBacklogPath) {
+    // Found an existing backlog — reformat into Raptor format
+    try {
+      const existingContent = fs.readFileSync(existingBacklogPath, "utf-8");
+      const reformatted = reformatBacklogToRaptor(existingContent, args.description, args.featureIdeas);
+
+      // Ensure docs dir exists
+      fs.mkdirSync(path.join(projectPath, "docs"), { recursive: true });
+      fs.writeFileSync(backlogPath, reformatted);
+
+      // If the original was in a different location or had a different name, note it
+      const existingRelative = path.relative(projectPath, existingBacklogPath);
+      const canonicalRelative = "docs/backlog.md";
+
+      if (existingRelative !== canonicalRelative) {
+        scaffoldedFiles.push("docs/backlog.md");
+        skippedFiles.push(`${existingRelative} (reformatted into docs/backlog.md)`);
+      } else {
+        scaffoldedFiles.push("docs/backlog.md (reformatted from existing)");
+      }
+    } catch {
+      // Fall back to generating a new backlog if reformat fails
+      fs.mkdirSync(path.join(projectPath, "docs"), { recursive: true });
+      const backlogContent = generateBacklog(args.description, args.featureIdeas);
+      fs.writeFileSync(backlogPath, backlogContent);
+      scaffoldedFiles.push("docs/backlog.md");
+    }
+  } else if (!fs.existsSync(backlogPath)) {
+    // No existing backlog found anywhere — scaffold a fresh one
     fs.mkdirSync(path.join(projectPath, "docs"), { recursive: true });
     const backlogContent = generateBacklog(args.description, args.featureIdeas);
     fs.writeFileSync(backlogPath, backlogContent);
     scaffoldedFiles.push("docs/backlog.md");
   } else {
-    skippedFiles.push("docs/backlog.md (already exists)");
+    skippedFiles.push("docs/backlog.md (already exists in Raptor format)");
   }
 
   // Context discovery — generate project-context.md
