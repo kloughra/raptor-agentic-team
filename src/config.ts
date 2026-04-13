@@ -6,6 +6,15 @@ export interface RaptorConfig {
   projectsBaseDir: string;
   teamTemplatePath: string | null;
   dinoNames?: Partial<Record<string, { species?: string; nickname?: string; emoji?: string }>>;
+  timeouts?: {
+    default?: number;
+    stepOverrides?: Record<string, number>;
+  };
+  testConfig?: {
+    framework?: string;
+    testCommand?: string;
+    scopedPattern?: string;
+  };
 }
 
 const DEFAULT_PROJECTS_BASE_DIR = path.join(os.homedir(), "workspace");

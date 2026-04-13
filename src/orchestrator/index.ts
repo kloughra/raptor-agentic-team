@@ -34,3 +34,12 @@ export { detectSprintFeatures, isMultiFeatureSprint, createFeatureStates, featur
 
 export { DEFAULT_DINO_NAMES, resolveDinoNames, formatRoleDisplay, formatHandoffRole, buildDinoIdentityPreamble } from "./dino";
 export type { DinoIdentity } from "./dino";
+
+export { resolveStepTimeout, formatTimeoutDisplay, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, STEP_TIMEOUT_DEFAULTS } from "./timeouts";
+export type { TimeoutConfig } from "./timeouts";
+
+export { detectTestFramework, buildScopedTestCommand, buildFullTestCommand, buildTestScopeSection, escapeForTestPattern } from "./test-scope";
+export type { TestFramework, TestScopeConfig } from "./test-scope";
+
+export { discoverProjectContext, generateContextDocument } from "./context-discovery";
+export type { ProjectContext } from "./context-discovery";
