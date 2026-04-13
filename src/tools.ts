@@ -11,6 +11,7 @@ import {
 import {
   parseSprintNumber,
   parseBacklogSections,
+  resolveBacklogPath,
 } from "./backlog-parser";
 import {
   parseBlockers,
@@ -385,44 +386,47 @@ export async function adoptProject(
   }
 
   // Backlog handling: find existing backlog (case-insensitive), reformat if found, scaffold if not
-  const backlogPath = path.join(projectPath, "docs", "backlog.md");
+  const canonicalBacklogPath = path.join(projectPath, "docs", "backlog.md");
   const existingBacklogPath = findExistingBacklog(projectPath);
 
   if (existingBacklogPath) {
-    // Found an existing backlog — reformat into Raptor format
+    // Found an existing backlog — always reformat into Raptor canonical format
     try {
       const existingContent = fs.readFileSync(existingBacklogPath, "utf-8");
       const reformatted = reformatBacklogToRaptor(existingContent, args.description, args.featureIdeas);
 
       // Ensure docs dir exists
       fs.mkdirSync(path.join(projectPath, "docs"), { recursive: true });
-      fs.writeFileSync(backlogPath, reformatted);
+      fs.writeFileSync(canonicalBacklogPath, reformatted);
 
-      // If the original was in a different location or had a different name, note it
+      // If the original was in a different location or had a different casing, note it
       const existingRelative = path.relative(projectPath, existingBacklogPath);
       const canonicalRelative = "docs/backlog.md";
 
-      if (existingRelative !== canonicalRelative) {
+      if (existingRelative.toLowerCase() !== canonicalRelative.toLowerCase()) {
+        // Different location (e.g., root BACKLOG.md → docs/backlog.md)
         scaffoldedFiles.push("docs/backlog.md");
         skippedFiles.push(`${existingRelative} (reformatted into docs/backlog.md)`);
+      } else if (existingRelative !== canonicalRelative) {
+        // Same location but different casing (e.g., docs/BACKLOG.md → docs/backlog.md)
+        scaffoldedFiles.push("docs/backlog.md (reformatted from " + existingRelative + ")");
       } else {
+        // Already at canonical path — reformatted in place
         scaffoldedFiles.push("docs/backlog.md (reformatted from existing)");
       }
     } catch {
       // Fall back to generating a new backlog if reformat fails
       fs.mkdirSync(path.join(projectPath, "docs"), { recursive: true });
       const backlogContent = generateBacklog(args.description, args.featureIdeas);
-      fs.writeFileSync(backlogPath, backlogContent);
+      fs.writeFileSync(canonicalBacklogPath, backlogContent);
       scaffoldedFiles.push("docs/backlog.md");
     }
-  } else if (!fs.existsSync(backlogPath)) {
+  } else {
     // No existing backlog found anywhere — scaffold a fresh one
     fs.mkdirSync(path.join(projectPath, "docs"), { recursive: true });
     const backlogContent = generateBacklog(args.description, args.featureIdeas);
-    fs.writeFileSync(backlogPath, backlogContent);
+    fs.writeFileSync(canonicalBacklogPath, backlogContent);
     scaffoldedFiles.push("docs/backlog.md");
-  } else {
-    skippedFiles.push("docs/backlog.md (already exists in Raptor format)");
   }
 
   // Context discovery — generate project-context.md
@@ -532,8 +536,8 @@ export async function getProjectStatus(
     done: { count: 0, items: [] as string[] },
   };
 
-  const backlogPath = path.join(project.path, "docs", "backlog.md");
-  if (fs.existsSync(backlogPath)) {
+  const backlogPath = resolveBacklogPath(project.path);
+  if (backlogPath) {
     try {
       const backlogContent = fs.readFileSync(backlogPath, "utf-8");
       sprintNumber = parseSprintNumber(backlogContent);
@@ -646,8 +650,8 @@ export async function runSprint(
   }
 
   // Verify backlog has items for this sprint
-  const backlogPath = path.join(project.path, "docs", "backlog.md");
-  if (fs.existsSync(backlogPath)) {
+  const backlogPath = resolveBacklogPath(project.path);
+  if (backlogPath) {
     const content = fs.readFileSync(backlogPath, "utf-8");
     const sprintSection = content.match(
       new RegExp(`## Sprint ${args.sprint}[^]*?(?=\\n## |$)`)
@@ -661,7 +665,7 @@ export async function runSprint(
   } else {
     return {
       status: "error",
-      message: "No backlog.md found in the project.",
+      message: "No backlog.md found in the project. Looked for backlog.md (any casing) in docs/ and project root.",
     };
   }
 
