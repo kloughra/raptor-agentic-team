@@ -1,3 +1,41 @@
+import * as fs from "fs";
+import * as path from "path";
+
+/**
+ * Resolve the actual path to the backlog file, case-insensitively.
+ * Searches docs/ first, then project root, for any casing of "backlog.md".
+ * Returns the real path on disk (preserving actual casing) or null if not found.
+ */
+export function resolveBacklogPath(projectPath: string): string | null {
+  const candidateDirs = [
+    path.join(projectPath, "docs"),
+    projectPath,
+  ];
+
+  for (const dir of candidateDirs) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      const stat = fs.statSync(dir);
+      if (!stat.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    try {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        if (file.toLowerCase() === "backlog.md") {
+          return path.join(dir, file);
+        }
+      }
+    } catch {
+      // skip unreadable dirs
+    }
+  }
+
+  return null;
+}
+
 export interface BacklogSections {
   inbox: { count: number; items: string[] };
   ready: { count: number; items: string[] };

@@ -10,14 +10,15 @@ import {
 } from "./state";
 import { SPRINT_WORKFLOW } from "./workflow";
 import { StepStatus } from "./workflow";
+import { resolveBacklogPath } from "../backlog-parser";
 
 /**
  * Detect multiple features from the sprint section of backlog.md.
  * Returns an array of feature slugs, or a single-element array for single-feature mode.
  */
 export function detectSprintFeatures(projectPath: string, sprint: number): string[] {
-  const backlogPath = path.join(projectPath, "docs", "backlog.md");
-  if (!fs.existsSync(backlogPath)) return [];
+  const backlogPath = resolveBacklogPath(projectPath);
+  if (!backlogPath) return [];
 
   const content = fs.readFileSync(backlogPath, "utf-8");
   const sprintMatch = content.match(

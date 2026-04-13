@@ -1,5 +1,78 @@
-import { describe, it, expect } from "@jest/globals";
-import { parseSprintNumber, parseBacklogSections } from "./backlog-parser";
+import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+import { parseSprintNumber, parseBacklogSections, resolveBacklogPath } from "./backlog-parser";
+
+describe("resolveBacklogPath", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "raptor-backlog-resolve-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("finds docs/backlog.md (lowercase)", () => {
+    fs.mkdirSync(path.join(tmpDir, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "docs", "backlog.md"), "# Backlog");
+
+    const result = resolveBacklogPath(tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.endsWith("backlog.md")).toBe(true);
+  });
+
+  it("finds docs/BACKLOG.md (uppercase)", () => {
+    fs.mkdirSync(path.join(tmpDir, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "docs", "BACKLOG.md"), "# Backlog");
+
+    const result = resolveBacklogPath(tmpDir);
+    expect(result).not.toBeNull();
+    // On case-sensitive FS this finds the exact file; on macOS both work
+    expect(result!.toLowerCase()).toContain("backlog.md");
+  });
+
+  it("finds BACKLOG.MD (all caps) in project root", () => {
+    fs.writeFileSync(path.join(tmpDir, "BACKLOG.MD"), "# Tasks");
+
+    const result = resolveBacklogPath(tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.toLowerCase()).toContain("backlog.md");
+  });
+
+  it("prefers docs/ over project root", () => {
+    fs.mkdirSync(path.join(tmpDir, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "docs", "backlog.md"), "# Docs Backlog");
+    fs.writeFileSync(path.join(tmpDir, "BACKLOG.md"), "# Root Backlog");
+
+    const result = resolveBacklogPath(tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!).toContain("docs");
+  });
+
+  it("returns null when no backlog exists", () => {
+    const result = resolveBacklogPath(tmpDir);
+    expect(result).toBeNull();
+  });
+
+  it("returns null for empty project", () => {
+    fs.mkdirSync(path.join(tmpDir, "docs"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "src"), { recursive: true });
+
+    const result = resolveBacklogPath(tmpDir);
+    expect(result).toBeNull();
+  });
+
+  it("finds Backlog.md (mixed case)", () => {
+    fs.mkdirSync(path.join(tmpDir, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "docs", "Backlog.md"), "# Backlog");
+
+    const result = resolveBacklogPath(tmpDir);
+    expect(result).not.toBeNull();
+  });
+});
 
 describe("parseSprintNumber", () => {
   it("extracts sprint number from standard header", () => {
