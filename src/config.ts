@@ -15,6 +15,19 @@ export interface RaptorConfig {
     testCommand?: string;
     scopedPattern?: string;
   };
+  codebaseContext?: {
+    maxSize?: number;
+    maxPerFile?: number;
+    excludePatterns?: string[];
+  };
+  artifactInjection?: {
+    customRequirements?: Record<string, Array<{ pattern: string; label: string; required: boolean }>>;
+    maxArtifactSize?: number;
+  };
+  scopeNarrowing?: {
+    enabled?: boolean;
+    disabledSteps?: string[];
+  };
 }
 
 const DEFAULT_PROJECTS_BASE_DIR = path.join(os.homedir(), "workspace");

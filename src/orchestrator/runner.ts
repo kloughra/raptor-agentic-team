@@ -33,6 +33,9 @@ import { Role } from "./workflow";
 import { resolveDinoNames, formatHandoffRole, DinoIdentity } from "./dino";
 import { resolveStepTimeout, TimeoutConfig } from "./timeouts";
 import { detectTestFramework, buildTestScopeSection } from "./test-scope";
+import { buildCodebaseSnapshot, formatSnapshotForPrompt } from "./codebase-context";
+import { resolveArtifacts, buildRequiredReadingSection } from "./artifact-injection";
+import { decomposeTask, executeNarrowedRetry, isNarrowable } from "./scope-narrowing";
 
 export const MAX_RETRY_ATTEMPTS = 3;
 export const ERROR_SUMMARY_MAX_LENGTH = 500;
@@ -99,7 +102,8 @@ function buildTaskDescription(
   featureSlug: string,
   sprint: number,
   feedback?: string,
-  testScopeSection?: string
+  testScopeSection?: string,
+  requiredReadingSection?: string
 ): string {
   let task = `Sprint ${sprint}, Step ${step.step}: ${step.description}.\n`;
   task += `Feature slug: ${featureSlug}\n`;
@@ -111,6 +115,11 @@ function buildTaskDescription(
   if (feedback) {
     task += `\nUser feedback from previous review:\n${feedback}\n`;
     task += "Please address this feedback in your output.\n";
+  }
+
+  // Inject required reading artifacts and checklist
+  if (requiredReadingSection) {
+    task += requiredReadingSection;
   }
 
   // Append test scope instructions if applicable
@@ -485,6 +494,28 @@ export async function runSprintFromStep(
         context = `--- Previous Sprint Context ---\n${sprintSummaries}\n\n--- Current Sprint Artifacts ---\n${context}`;
       }
 
+      // Inject codebase snapshot for Sprint 2+ (regenerated per step)
+      if (sprint > 1) {
+        const codebaseSnapshot = buildCodebaseSnapshot(projectPath);
+        const codebaseSection = formatSnapshotForPrompt(codebaseSnapshot);
+        context = `${codebaseSection}\n\n${context}`;
+      }
+
+      // Resolve and inject required artifacts (read-before-write enforcement)
+      const artifactResult = resolveArtifacts(step.name, featureSlug, projectPath);
+      if (artifactResult.missing.length > 0) {
+        // Required artifact missing — record failure and retry
+        stepState.failures.push({
+          attempt,
+          errorSummary: `Missing required artifacts: ${artifactResult.missing.join(", ")}`,
+          timestamp: new Date().toISOString(),
+          hadPartialArtifacts: false,
+        });
+        saveSprintState(projectSlug, sprint, state);
+        continue;
+      }
+      const requiredReadingSection = artifactResult.section || undefined;
+
       // Build test scope section for relevant steps
       const testScopeSection = buildTestScopeSection(
         step.name,
@@ -499,7 +530,8 @@ export async function runSprintFromStep(
         featureSlug,
         sprint,
         attempt === 1 && i === fromStep - 1 ? feedback : undefined,
-        testScopeSection || undefined
+        testScopeSection || undefined,
+        requiredReadingSection
       );
 
       // Add retry context for attempts > 1
@@ -512,6 +544,33 @@ export async function runSprintFromStep(
           partialArtifacts,
           projectPath
         );
+      }
+
+      // On final attempt, try scope narrowing before normal retry
+      if (attempt === MAX_RETRY_ATTEMPTS && isNarrowable(step.role)) {
+        const subTasks = decomposeTask(step.role, step, featureSlug, projectPath, taskDesc);
+        if (subTasks.length > 1) {
+          const stepTimeout = resolveStepTimeout(step.name);
+          const narrowResult = await executeNarrowedRetry(
+            subTasks, step.role, systemPrompt, context, projectPath, stepTimeout
+          );
+
+          if (narrowResult.completedIds.length === narrowResult.subTasks.length) {
+            // All sub-tasks succeeded
+            succeeded = true;
+            break;
+          }
+
+          // Partial or full failure — record and fall through to escalation
+          stepState.failures.push({
+            attempt,
+            errorSummary: `Narrowed retry (${narrowResult.strategy}): ${narrowResult.completedIds.length}/${subTasks.length} sub-tasks completed. Failed: ${narrowResult.failedIds.join(", ")}`,
+            timestamp: new Date().toISOString(),
+            hadPartialArtifacts: narrowResult.completedIds.length > 0,
+          });
+          saveSprintState(projectSlug, sprint, state);
+          continue;
+        }
       }
 
       // Spawn subagent with step-aware timeout
