@@ -13,6 +13,7 @@ import {
 } from "./template";
 import {
   bootstrapProject,
+  adoptProject,
   listProjects,
   getProjectStatus,
   runSprint,
@@ -76,6 +77,39 @@ async function main() {
     },
     async (args) => {
       const result = await bootstrapProject(ctx, args);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  // Register adopt_project tool
+  server.tool(
+    "adopt_project",
+    "Adopt an existing repository into Raptor. Scaffolds only missing files (TEAM.md, docs dirs, backlog), discovers project context from existing files, and registers the project so run_sprint works.",
+    {
+      path: z
+        .string()
+        .describe(
+          "Absolute path to the existing git repository (e.g. '/Users/me/workspace/my-app')"
+        ),
+      name: z
+        .string()
+        .describe(
+          "Project name for Raptor registration (lowercase, hyphen-separated, e.g. 'my-app')"
+        ),
+      description: z
+        .string()
+        .describe("Brief description of what this project is"),
+      featureIdeas: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "List of initial feature ideas to seed the backlog Inbox"
+        ),
+    },
+    async (args) => {
+      const result = await adoptProject(ctx, args);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };

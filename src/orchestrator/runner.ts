@@ -31,6 +31,8 @@ import {
 } from "./retro";
 import { Role } from "./workflow";
 import { resolveDinoNames, formatHandoffRole, DinoIdentity } from "./dino";
+import { resolveStepTimeout, TimeoutConfig } from "./timeouts";
+import { detectTestFramework, buildTestScopeSection } from "./test-scope";
 
 export const MAX_RETRY_ATTEMPTS = 3;
 export const ERROR_SUMMARY_MAX_LENGTH = 500;
@@ -96,7 +98,8 @@ function buildTaskDescription(
   step: WorkflowStep,
   featureSlug: string,
   sprint: number,
-  feedback?: string
+  feedback?: string,
+  testScopeSection?: string
 ): string {
   let task = `Sprint ${sprint}, Step ${step.step}: ${step.description}.\n`;
   task += `Feature slug: ${featureSlug}\n`;
@@ -108,6 +111,11 @@ function buildTaskDescription(
   if (feedback) {
     task += `\nUser feedback from previous review:\n${feedback}\n`;
     task += "Please address this feedback in your output.\n";
+  }
+
+  // Append test scope instructions if applicable
+  if (testScopeSection) {
+    task += testScopeSection;
   }
 
   task += `\nCommit your work with the format: [${step.role.toUpperCase()}] {action}: {description}\n`;
@@ -231,6 +239,10 @@ export async function runSprintFromStep(
 
   // Resolve dino names for this sprint run
   const dinoNames = resolveDinoNames();
+
+  // Detect test framework once for scoped test execution
+  const testFramework = detectTestFramework(projectPath);
+  const isMultiFeature = !!(state.features && state.features.length > 1);
 
   // Load cross-sprint context for agent prompts
   const sprintSummaries = loadSprintSummaries(projectPath);
@@ -473,12 +485,21 @@ export async function runSprintFromStep(
         context = `--- Previous Sprint Context ---\n${sprintSummaries}\n\n--- Current Sprint Artifacts ---\n${context}`;
       }
 
+      // Build test scope section for relevant steps
+      const testScopeSection = buildTestScopeSection(
+        step.name,
+        featureSlug,
+        testFramework,
+        isMultiFeature
+      );
+
       // Add user feedback on first attempt if provided
       const taskDesc = buildTaskDescription(
         step,
         featureSlug,
         sprint,
-        attempt === 1 && i === fromStep - 1 ? feedback : undefined
+        attempt === 1 && i === fromStep - 1 ? feedback : undefined,
+        testScopeSection || undefined
       );
 
       // Add retry context for attempts > 1
@@ -493,13 +514,15 @@ export async function runSprintFromStep(
         );
       }
 
-      // Spawn subagent
+      // Spawn subagent with step-aware timeout
+      const stepTimeout = resolveStepTimeout(step.name);
       const result = await spawnAgent(
         step.role,
         systemPrompt,
         context,
         taskDesc,
-        projectPath
+        projectPath,
+        stepTimeout
       );
 
       // Check for [BLOCKER] — immediate escalation

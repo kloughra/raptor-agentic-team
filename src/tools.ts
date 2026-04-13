@@ -25,6 +25,7 @@ import {
 } from "./orchestrator";
 import { loadSprintSummaries } from "./orchestrator/summary";
 import { resolveDinoNames } from "./orchestrator/dino";
+import { discoverProjectContext, generateContextDocument } from "./orchestrator/context-discovery";
 
 const PROJECT_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
 
@@ -136,6 +137,152 @@ export async function bootstrapProject(
     },
     message: `Project '${args.name}' bootstrapped at ${projectPath}. Next step: PO authors the first feature spec.`,
     scaffoldedFiles,
+  };
+}
+
+export async function adoptProject(
+  ctx: ToolContext,
+  args: { path: string; name: string; description: string; featureIdeas?: string[] }
+): Promise<Record<string, unknown>> {
+  // Validate project name
+  if (!PROJECT_NAME_REGEX.test(args.name)) {
+    return {
+      status: "error",
+      message: `Invalid project name '${args.name}'. Use lowercase, hyphen-separated format (e.g., 'my-app').`,
+    };
+  }
+
+  // Check for duplicate name
+  if (await ctx.registry.projectExists(args.name)) {
+    return {
+      status: "error",
+      message: `Project '${args.name}' already exists. Use list_projects to see all projects.`,
+    };
+  }
+
+  // Validate path exists and is a directory
+  if (!fs.existsSync(args.path)) {
+    return {
+      status: "error",
+      message: `Path '${args.path}' does not exist.`,
+    };
+  }
+
+  if (!fs.statSync(args.path).isDirectory()) {
+    return {
+      status: "error",
+      message: `Path '${args.path}' is not a directory.`,
+    };
+  }
+
+  // Check path is a git repo
+  const gitDir = path.join(args.path, ".git");
+  if (!fs.existsSync(gitDir)) {
+    return {
+      status: "error",
+      message: `Path must be an initialized git repository. Run 'git init' in '${args.path}' first.`,
+    };
+  }
+
+  // Check path not already registered
+  const projects = await ctx.registry.listProjects();
+  const existingByPath = projects.find((p) => p.path === args.path);
+  if (existingByPath) {
+    return {
+      status: "error",
+      message: `This repo is already tracked as '${existingByPath.name}'.`,
+    };
+  }
+
+  const projectPath = args.path;
+  const scaffoldedFiles: string[] = [];
+  const skippedFiles: string[] = [];
+
+  // Scaffold TEAM.md — only if missing
+  const teamMdPath = path.join(projectPath, "TEAM.md");
+  if (!fs.existsSync(teamMdPath)) {
+    const teamMdContent = readTemplate(ctx.templatePath);
+    fs.writeFileSync(teamMdPath, teamMdContent);
+    scaffoldedFiles.push("TEAM.md");
+  } else {
+    skippedFiles.push("TEAM.md (already exists)");
+  }
+
+  // Scaffold directories — additive only
+  for (const dir of SCAFFOLD_DIRS) {
+    const dirPath = path.join(projectPath, dir);
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+      fs.writeFileSync(path.join(dirPath, ".gitkeep"), "");
+      scaffoldedFiles.push(`${dir}/.gitkeep`);
+    } else {
+      skippedFiles.push(`${dir}/ (already exists)`);
+    }
+  }
+
+  // Scaffold backlog.md — only if missing
+  const backlogPath = path.join(projectPath, "docs", "backlog.md");
+  if (!fs.existsSync(backlogPath)) {
+    // Ensure docs dir exists
+    fs.mkdirSync(path.join(projectPath, "docs"), { recursive: true });
+    const backlogContent = generateBacklog(args.description, args.featureIdeas);
+    fs.writeFileSync(backlogPath, backlogContent);
+    scaffoldedFiles.push("docs/backlog.md");
+  } else {
+    skippedFiles.push("docs/backlog.md (already exists)");
+  }
+
+  // Context discovery — generate project-context.md
+  let contextDiscovered = false;
+  const contextPath = path.join(projectPath, "docs", "project-context.md");
+  if (!fs.existsSync(contextPath)) {
+    try {
+      fs.mkdirSync(path.join(projectPath, "docs"), { recursive: true });
+      const context = discoverProjectContext(projectPath);
+      const contextDoc = generateContextDocument(context, args.name);
+      fs.writeFileSync(contextPath, contextDoc);
+      scaffoldedFiles.push("docs/project-context.md");
+      contextDiscovered = true;
+    } catch {
+      // Context discovery is best-effort
+    }
+  } else {
+    skippedFiles.push("docs/project-context.md (already exists)");
+  }
+
+  // Git commit for scaffolded files (if any)
+  if (scaffoldedFiles.length > 0) {
+    try {
+      const git = simpleGit(projectPath);
+      await git.add(scaffoldedFiles.map((f) => path.join(projectPath, f)));
+      await git.commit(`[BOOTSTRAP] Architect: adopted existing project ${args.name}`);
+    } catch {
+      // Non-critical — files are written even if commit fails
+    }
+  }
+
+  // Register project
+  const now = new Date().toISOString();
+  const entry: ProjectEntry = {
+    name: args.name,
+    slug: args.name,
+    description: args.description,
+    path: projectPath,
+    createdAt: now,
+  };
+  await ctx.registry.addProject(entry);
+
+  return {
+    status: "success",
+    project: {
+      name: args.name,
+      path: projectPath,
+      createdAt: now,
+    },
+    scaffoldedFiles,
+    skippedFiles,
+    contextDiscovered,
+    message: `Project '${args.name}' adopted from ${projectPath}. ${scaffoldedFiles.length} files scaffolded, ${skippedFiles.length} skipped. Next step: populate the backlog and run a sprint.`,
   };
 }
 
