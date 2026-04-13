@@ -6,6 +6,8 @@
 - [ ] scoped-test-execution: Engineers only run their own tests during implementation. Full suite runs once after merge. Prevents parallel pytest deadlocks (26 competing processes observed)
 
 ## Ready (prioritized, next sprint)
+- codebase-aware-agent-context: Agents in Sprint 2+ should see what was built in prior sprints — not just high-level summaries but actual file contents and structure. Feed codebase layout and key file excerpts into agent context.
+- read-before-write-enforcement: Verify that agents actually read all input artifacts before producing output. Add a structured discovery phase before generation, with validation that required files were accessed.
 - resource-aware-agent-scheduling: Add concurrency limits to parallel agent execution. Cap parallelism (e.g., max 2 agents) or detect CPU contention and queue excess agents
 - progressive-retry-with-scope-narrowing: When a step fails twice, third attempt gets narrower scope (split oversized tasks into sub-tasks) rather than retrying identical prompt
 - checkpoint-resume-for-subagents: Pre-summarize completed discovery work so retries skip re-reading all specs and jump straight to generation
