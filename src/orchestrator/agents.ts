@@ -19,7 +19,8 @@ export function spawnAgent(
   systemPrompt: string,
   context: string,
   taskDescription: string,
-  cwd: string
+  cwd: string,
+  timeoutMs?: number
 ): Promise<AgentResult> {
   return new Promise((resolve) => {
     const args = [
@@ -36,7 +37,7 @@ export function spawnAgent(
       args,
       {
         cwd,
-        timeout: AGENT_TIMEOUT_MS,
+        timeout: timeoutMs ?? AGENT_TIMEOUT_MS,
         maxBuffer: 10 * 1024 * 1024, // 10MB
         env: { ...process.env },
       },
