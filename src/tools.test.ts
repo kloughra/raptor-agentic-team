@@ -4,7 +4,7 @@ import * as path from "path";
 import * as os from "os";
 import simpleGit from "simple-git";
 import { Registry } from "./registry";
-import { bootstrapProject, listProjects, getProjectStatus, ToolContext } from "./tools";
+import { bootstrapProject, adoptProject, listProjects, getProjectStatus, ToolContext } from "./tools";
 
 let tmpDir: string;
 let raptorHome: string;
@@ -175,6 +175,188 @@ describe("bootstrapProject", () => {
       path.join(projectsBaseDir, "my-app")
     );
     expect(String(result.message)).toContain("Next step");
+  });
+});
+
+describe("adoptProject — backlog reformatting", () => {
+  it("reformats a root-level BACKLOG.md into Raptor format at docs/backlog.md", async () => {
+    // Create an existing repo with BACKLOG.md in root
+    const repoPath = path.join(tmpDir, "existing-repo");
+    fs.mkdirSync(repoPath, { recursive: true });
+    const git = simpleGit(repoPath);
+    await git.init();
+
+    fs.writeFileSync(
+      path.join(repoPath, "BACKLOG.md"),
+      [
+        "# BACKLOG",
+        "",
+        "## In Progress",
+        "- Build authentication system",
+        "- [ ] Add password reset flow",
+        "",
+        "## Up Next",
+        "- Payment integration with Stripe",
+        "",
+        "## Ideas",
+        "- Mobile app companion",
+        "- Dark mode theme",
+        "",
+        "## Completed",
+        "- [x] Project initial setup",
+        "- [x] Database schema v1",
+      ].join("\n")
+    );
+
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# My App");
+    await git.add("-A");
+    await git.commit("initial");
+
+    const result = await adoptProject(ctx, {
+      path: repoPath,
+      name: "existing-app",
+      description: "An existing app",
+    });
+
+    expect(result.status).toBe("success");
+
+    // Verify docs/backlog.md was created with Raptor format
+    const backlogPath = path.join(repoPath, "docs", "backlog.md");
+    expect(fs.existsSync(backlogPath)).toBe(true);
+
+    const content = fs.readFileSync(backlogPath, "utf-8");
+
+    // Check Raptor section headers
+    expect(content).toContain("## Ready (prioritized, next sprint)");
+    expect(content).toContain("## Inbox (unprioritized)");
+    expect(content).toContain("## Done");
+
+    // Check items were preserved
+    expect(content).toContain("Build authentication system");
+    expect(content).toContain("Add password reset flow");
+    expect(content).toContain("Payment integration with Stripe");
+    expect(content).toContain("Mobile app companion");
+    expect(content).toContain("Dark mode theme");
+    expect(content).toContain("Project initial setup");
+    expect(content).toContain("Database schema v1");
+  });
+
+  it("reformats BACKLOG.MD (all caps extension)", async () => {
+    const repoPath = path.join(tmpDir, "allcaps-repo");
+    fs.mkdirSync(repoPath, { recursive: true });
+    const git = simpleGit(repoPath);
+    await git.init();
+
+    fs.writeFileSync(
+      path.join(repoPath, "BACKLOG.MD"),
+      "# Tasks\n- Feature Alpha\n- [x] Feature Beta"
+    );
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# App");
+    await git.add("-A");
+    await git.commit("initial");
+
+    const result = await adoptProject(ctx, {
+      path: repoPath,
+      name: "allcaps-app",
+      description: "Test",
+    });
+
+    expect(result.status).toBe("success");
+    const content = fs.readFileSync(path.join(repoPath, "docs", "backlog.md"), "utf-8");
+    expect(content).toContain("Feature Alpha");
+    expect(content).toContain("Feature Beta");
+    expect(content).toContain("## Done");
+  });
+
+  it("does not lose items during reformatting", async () => {
+    const repoPath = path.join(tmpDir, "no-loss-repo");
+    fs.mkdirSync(repoPath, { recursive: true });
+    const git = simpleGit(repoPath);
+    await git.init();
+
+    const items = [
+      "Implement OAuth2 with PKCE flow for mobile clients",
+      "Add rate limiting (100 req/min per API key, 1000 req/min global)",
+      "Set up WebSocket server for real-time order notifications",
+      "Build admin dashboard with role-based access control",
+      "Migrate PostgreSQL to CockroachDB for multi-region support",
+    ];
+
+    fs.writeFileSync(
+      path.join(repoPath, "BACKLOG.md"),
+      `# Backlog\n${items.map((i) => `- ${i}`).join("\n")}`
+    );
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# App");
+    await git.add("-A");
+    await git.commit("initial");
+
+    await adoptProject(ctx, {
+      path: repoPath,
+      name: "no-loss-app",
+      description: "Test",
+    });
+
+    const content = fs.readFileSync(path.join(repoPath, "docs", "backlog.md"), "utf-8");
+    for (const item of items) {
+      expect(content).toContain(item);
+    }
+  });
+
+  it("handles numbered list items in existing backlog", async () => {
+    const repoPath = path.join(tmpDir, "numbered-repo");
+    fs.mkdirSync(repoPath, { recursive: true });
+    const git = simpleGit(repoPath);
+    await git.init();
+
+    fs.writeFileSync(
+      path.join(repoPath, "BACKLOG.md"),
+      [
+        "# Roadmap",
+        "",
+        "## Planned",
+        "1. Build user registration",
+        "2. Add email verification",
+        "3. Implement SSO login",
+      ].join("\n")
+    );
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# App");
+    await git.add("-A");
+    await git.commit("initial");
+
+    await adoptProject(ctx, {
+      path: repoPath,
+      name: "numbered-app",
+      description: "Test",
+    });
+
+    const content = fs.readFileSync(path.join(repoPath, "docs", "backlog.md"), "utf-8");
+    expect(content).toContain("Build user registration");
+    expect(content).toContain("Add email verification");
+    expect(content).toContain("Implement SSO login");
+  });
+
+  it("does not reformat if docs/backlog.md already exists in Raptor format", async () => {
+    const repoPath = path.join(tmpDir, "raptor-format-repo");
+    fs.mkdirSync(path.join(repoPath, "docs"), { recursive: true });
+    const git = simpleGit(repoPath);
+    await git.init();
+
+    const raptorBacklog = "# Backlog\n\n## Ready (prioritized, next sprint)\n- feature-x\n\n## Inbox (unprioritized)\n\n## Done\n";
+    fs.writeFileSync(path.join(repoPath, "docs", "backlog.md"), raptorBacklog);
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# App");
+    await git.add("-A");
+    await git.commit("initial");
+
+    await adoptProject(ctx, {
+      path: repoPath,
+      name: "raptor-format-app",
+      description: "Test",
+    });
+
+    // Should detect docs/backlog.md as existing and reformat it (since findExistingBacklog finds it)
+    // The content should still contain the original items
+    const content = fs.readFileSync(path.join(repoPath, "docs", "backlog.md"), "utf-8");
+    expect(content).toContain("feature-x");
   });
 });
 

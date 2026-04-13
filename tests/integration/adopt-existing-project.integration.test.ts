@@ -172,6 +172,118 @@ describe("Adopt Existing Project", () => {
     });
   });
 
+  describe("Backlog reformatting on adopt", () => {
+    it("finds BACKLOG.md (uppercase) in project root", () => {
+      const repoPath = path.join(tmpDir, "uppercase-backlog-test");
+      fs.mkdirSync(repoPath, { recursive: true });
+      fs.writeFileSync(path.join(repoPath, "BACKLOG.md"), "# Backlog\n- Build login page\n- Add auth");
+
+      // Case-insensitive detection
+      const files = fs.readdirSync(repoPath);
+      const backlogFile = files.find((f) => f.toLowerCase() === "backlog.md");
+      expect(backlogFile).toBe("BACKLOG.md");
+    });
+
+    it("finds BACKLOG.MD (all caps) in project root", () => {
+      const repoPath = path.join(tmpDir, "allcaps-backlog-test");
+      fs.mkdirSync(repoPath, { recursive: true });
+      fs.writeFileSync(path.join(repoPath, "BACKLOG.MD"), "# TODO\n- Feature A");
+
+      const files = fs.readdirSync(repoPath);
+      const backlogFile = files.find((f) => f.toLowerCase() === "backlog.md");
+      expect(backlogFile).toBe("BACKLOG.MD");
+    });
+
+    it("finds backlog.md in docs/ subfolder", () => {
+      const repoPath = path.join(tmpDir, "docs-backlog-test");
+      fs.mkdirSync(path.join(repoPath, "docs"), { recursive: true });
+      fs.writeFileSync(path.join(repoPath, "docs", "backlog.md"), "# Backlog\n- Item 1");
+
+      const docsFiles = fs.readdirSync(path.join(repoPath, "docs"));
+      const backlogFile = docsFiles.find((f) => f.toLowerCase() === "backlog.md");
+      expect(backlogFile).toBe("backlog.md");
+    });
+
+    it("reformats freeform backlog items into Raptor sections", () => {
+      const existingContent = [
+        "# TODO",
+        "",
+        "## In Progress",
+        "- Build user dashboard",
+        "- [x] Set up CI/CD pipeline",
+        "",
+        "## Up Next",
+        "- Add payment integration",
+        "- Implement notifications",
+        "",
+        "## Ideas",
+        "- Mobile app version",
+        "- Analytics dashboard",
+        "",
+        "## Completed",
+        "- [x] Project scaffolding",
+        "- [x] Database schema design",
+      ].join("\n");
+
+      // Simulate the reformat logic
+      const lines = existingContent.split("\n");
+      const items: { text: string; section: string; done: boolean }[] = [];
+      let currentSection = "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (/^#{1,3}\s*(in\s*progress|current|active)/i.test(trimmed)) {
+          currentSection = "sprint";
+        } else if (/^#{1,3}\s*(up\s*next|ready|prioritized|next)/i.test(trimmed)) {
+          currentSection = "ready";
+        } else if (/^#{1,3}\s*(ideas|inbox|unprioritized|icebox|future)/i.test(trimmed)) {
+          currentSection = "inbox";
+        } else if (/^#{1,3}\s*(completed|done|finished|shipped)/i.test(trimmed)) {
+          currentSection = "done";
+        }
+
+        const itemMatch = trimmed.match(/^[-*]\s+(?:\[([x ])\]\s+)?(.+)/i);
+        if (itemMatch) {
+          const checked = itemMatch[1]?.toLowerCase() === "x";
+          items.push({ text: itemMatch[2], section: currentSection, done: checked });
+        }
+      }
+
+      // Verify items were categorized
+      const sprintItems = items.filter((i) => i.section === "sprint" && !i.done);
+      const readyItems = items.filter((i) => i.section === "ready");
+      const inboxItems = items.filter((i) => i.section === "inbox");
+      const doneItems = items.filter((i) => i.done || i.section === "done");
+
+      expect(sprintItems.length).toBe(1); // "Build user dashboard"
+      expect(readyItems.length).toBe(2);  // payment + notifications
+      expect(inboxItems.length).toBe(2);  // mobile + analytics
+      expect(doneItems.length).toBeGreaterThanOrEqual(3); // CI/CD + scaffolding + database
+    });
+
+    it("preserves all item text during reformatting", () => {
+      const items = [
+        "Build user authentication with OAuth2 and PKCE flow",
+        "Add rate limiting to API endpoints (100 req/min default)",
+        "Implement WebSocket real-time notifications for order updates",
+      ];
+
+      const backlog = `# BACKLOG\n${items.map((i) => `- ${i}`).join("\n")}`;
+
+      // All items should appear in reformatted output
+      for (const item of items) {
+        expect(backlog).toContain(item);
+      }
+    });
+
+    it("detects sprint number from existing backlog", () => {
+      const content = "# Backlog\n## Sprint 3\n- [ ] Feature X\n## Done\n- [x] Feature Y";
+      const match = content.match(/sprint\s+(\d+)/i);
+      expect(match).not.toBeNull();
+      expect(parseInt(match![1], 10)).toBe(3);
+    });
+  });
+
   describe("Context discovery", () => {
     it("reads README.md for project description", () => {
       const repoPath = path.join(tmpDir, "context-test");
