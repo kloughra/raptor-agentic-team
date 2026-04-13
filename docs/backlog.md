@@ -1,19 +1,16 @@
 # Backlog
 
-## Sprint 5 — Planned
-- [ ] agent-parallel-execution: Parallel agent execution where TEAM.md allows it (Architect + QA partial parallel, Architect review + QA test run)
-- [ ] multi-engineer-coordination: Multi-engineer support with feature branch isolation and conflict resolution
-- [ ] dino-agent-names: Assign dinosaur-themed names to each agent role
+## Sprint 6 — Planned
+- [ ] adopt-existing-project: Register an existing repo in Raptor, scaffold only missing pieces (TEAM.md, docs dirs, backlog), enable run_sprint on repos not built with bootstrap_project
+- [ ] agent-timeout-scaling-by-step-type: Scale AGENT_TIMEOUT_MS based on step type. QA generation steps need 15-20min, engineer edit steps need 5min. Flat 5min timeout caused 5 consecutive QA agent deaths
+- [ ] scoped-test-execution: Engineers only run their own tests during implementation. Full suite runs once after merge. Prevents parallel pytest deadlocks (26 competing processes observed)
 
 ## Ready (prioritized, next sprint)
-(empty — replenish from Inbox during Sprint 5 retro)
+- resource-aware-agent-scheduling: Add concurrency limits to parallel agent execution. Cap parallelism (e.g., max 2 agents) or detect CPU contention and queue excess agents
+- progressive-retry-with-scope-narrowing: When a step fails twice, third attempt gets narrower scope (split oversized tasks into sub-tasks) rather than retrying identical prompt
+- checkpoint-resume-for-subagents: Pre-summarize completed discovery work so retries skip re-reading all specs and jump straight to generation
 
 ## Inbox (unprioritized)
-- scoped-test-execution: Engineers should only run their own tests during implementation, not the full suite. Full suite runs once after all agents merge. Prevents parallel pytest deadlocks (observed: 26 competing pytest processes ground dora-metrics sprint to a halt, FEAT-H and FEAT-J ran 3hrs instead of ~1hr) — source: OpenStory session post-mortem
-- resource-aware-agent-scheduling: Add concurrency limits to parallel agent execution. When agents share one machine, cap parallelism (e.g., max 2 agents) or detect CPU contention and queue excess agents. Current behavior: all engineers spawn simultaneously regardless of machine capacity — source: OpenStory session post-mortem
-- agent-timeout-scaling-by-step-type: Scale AGENT_TIMEOUT_MS based on step type. QA generation steps (writing BDD + integration + performance tests) need significantly more time/tokens than engineer edit steps. Current flat 5-minute timeout caused 5 consecutive QA agent deaths on financial-planning-app Step 3 before any could finish writing tests — source: OpenStory session post-mortem
-- progressive-retry-with-scope-narrowing: When a step fails twice, the third attempt should get a narrower scope (e.g., split "write all BDD + integration + performance tests" into separate sub-tasks) rather than retrying the identical prompt. Current retry sends the same prompt with error context appended, which doesn't help when the root cause is scope/timeout — source: OpenStory session post-mortem
-- checkpoint-resume-for-subagents: Carry forward partial artifacts across retries more aggressively. Current buildRetryContext reads partial files but the sub-agent still re-reads all specs from scratch. Pre-summarize completed discovery work so retries skip the "read spec → read architecture → identify gaps" phase and jump straight to generation — source: OpenStory session post-mortem
 - mcp-remote-hosting: Host Raptor remotely for multi-device access (laptop, desktop, phone) — source: user request
 - mcp-github-integration: Create GitHub repos and push during bootstrap — source: user request
 - mcp-cicd-setup: Configure CI/CD pipelines in bootstrapped repos — source: user request
@@ -23,6 +20,9 @@
 - multi-device-sync: Sync project state across devices — source: user request
 
 ## Done
+- [x] agent-parallel-execution: Parallel agent execution where TEAM.md allows it (Sprint 5)
+- [x] multi-engineer-coordination: Multi-engineer support with feature branch isolation and conflict resolution (Sprint 5)
+- [x] dino-agent-names: Dinosaur-themed names for each agent role (Sprint 5)
 - [x] cross-sprint-context: Sprint summary artifacts generated after each sprint, fed as context to future sprint agents (Sprint 4)
 - [x] agent-retrospective-improvements: Each role proposes TEAM.md improvements; user reviews at new retro checkpoint; adopted changes applied (Sprint 4)
 - [x] dod-checklist-tracking: Track DoD checklist in sprint state and update PR description before merge (Sprint 4)
