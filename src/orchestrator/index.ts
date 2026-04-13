@@ -43,3 +43,12 @@ export type { TestFramework, TestScopeConfig } from "./test-scope";
 
 export { discoverProjectContext, generateContextDocument } from "./context-discovery";
 export type { ProjectContext } from "./context-discovery";
+
+export { buildCodebaseSnapshot, formatSnapshotForPrompt, extractExports } from "./codebase-context";
+export type { CodebaseSnapshot, CodebaseContextConfig, ModuleExport, FileExcerpt } from "./codebase-context";
+
+export { resolveArtifacts, buildRequiredReadingSection, STEP_ARTIFACT_REQUIREMENTS } from "./artifact-injection";
+export type { ArtifactRequirement, InjectedArtifact, ArtifactInjectionResult } from "./artifact-injection";
+
+export { decomposeTask, executeNarrowedRetry, isNarrowable } from "./scope-narrowing";
+export type { SubTask, NarrowingResult, NarrowingConfig } from "./scope-narrowing";
