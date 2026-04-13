@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { SprintState } from "./state";
+import { resolveBacklogPath } from "../backlog-parser";
 
 const DEFAULT_MAX_CONTEXT_CHARS = 10000;
 
@@ -166,8 +167,8 @@ export function loadSprintSummaries(
 // --- Internal helpers ---
 
 function extractSprintGoal(projectPath: string, sprint: number): string | null {
-  const backlogPath = path.join(projectPath, "docs", "backlog.md");
-  if (!fs.existsSync(backlogPath)) return null;
+  const backlogPath = resolveBacklogPath(projectPath);
+  if (!backlogPath) return null;
 
   try {
     const content = fs.readFileSync(backlogPath, "utf-8");
@@ -185,8 +186,8 @@ function extractSprintGoal(projectPath: string, sprint: number): string | null {
 }
 
 function extractFeaturesDelivered(projectPath: string, sprint: number): string[] {
-  const backlogPath = path.join(projectPath, "docs", "backlog.md");
-  if (!fs.existsSync(backlogPath)) return [];
+  const backlogPath = resolveBacklogPath(projectPath);
+  if (!backlogPath) return [];
 
   try {
     const content = fs.readFileSync(backlogPath, "utf-8");
@@ -269,8 +270,8 @@ function extractIssues(state: SprintState): string[] {
 }
 
 function extractDeferredItems(projectPath: string): string[] {
-  const backlogPath = path.join(projectPath, "docs", "backlog.md");
-  if (!fs.existsSync(backlogPath)) return [];
+  const backlogPath = resolveBacklogPath(projectPath);
+  if (!backlogPath) return [];
 
   try {
     const content = fs.readFileSync(backlogPath, "utf-8");

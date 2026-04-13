@@ -13,6 +13,7 @@ import {
   saveSprintState,
   createInitialState,
 } from "./state";
+import { resolveBacklogPath } from "../backlog-parser";
 import { renderProgressTable } from "./progress";
 import { buildCheckpointPrompt, CheckpointPrompt } from "./checkpoints";
 import { buildRolePrompt, buildStepContext } from "./prompts";
@@ -54,8 +55,8 @@ export interface SprintResult {
  * Looks at the first item in the sprint section of backlog.md.
  */
 function extractFeatureSlug(projectPath: string): string | null {
-  const backlogPath = path.join(projectPath, "docs", "backlog.md");
-  if (!fs.existsSync(backlogPath)) return null;
+  const backlogPath = resolveBacklogPath(projectPath);
+  if (!backlogPath) return null;
 
   const content = fs.readFileSync(backlogPath, "utf-8");
   const sprintMatch = content.match(
