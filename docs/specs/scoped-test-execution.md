@@ -24,6 +24,7 @@ As the Raptor orchestrator, I want engineers to only run tests relevant to their
    - Otherwise → no scoping, run whatever the engineer decides
 5. The scoped test pattern is passed in the agent's context, not hardcoded in the system prompt
 6. Step 7 (QA test run) always runs the full suite regardless of scoping
+7. During parallel engineer execution, the agent's task description includes a **shared file warning**: "Do NOT modify shared config files (e.g., jest.config.js, pyproject.toml, tsconfig.json, Cargo.toml) — these are shared across features and concurrent modification will cause conflicts. If a config change is needed, raise a [BLOCKER]."
 
 ## Edge Cases
 - Feature slug contains characters that are invalid in test path patterns → escape them
