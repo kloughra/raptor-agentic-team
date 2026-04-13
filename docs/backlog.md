@@ -8,6 +8,7 @@
 - checkpoint-resume-for-subagents: Pre-summarize completed discovery work so retries skip re-reading all specs and jump straight to generation
 
 ## Inbox (unprioritized)
+- agent-assisted-backlog-reformat: When deterministic backlog parsing fails to categorize items (tables, prose, non-standard formats), fall back to spawning a PO agent to reformat. Handles edge cases the regex parser misses — source: post-mortem from hotfix/backlog-reformat-on-adopt
 - mcp-remote-hosting: Host Raptor remotely for multi-device access (laptop, desktop, phone) — source: user request
 - mcp-github-integration: Create GitHub repos and push during bootstrap — source: user request
 - mcp-cicd-setup: Configure CI/CD pipelines in bootstrapped repos — source: user request
