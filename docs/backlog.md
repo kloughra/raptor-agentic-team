@@ -1,15 +1,12 @@
 # Backlog
 
-## Sprint 6 — Planned
-- [ ] adopt-existing-project: Register an existing repo in Raptor, scaffold only missing pieces (TEAM.md, docs dirs, backlog), enable run_sprint on repos not built with bootstrap_project
-- [ ] agent-timeout-scaling-by-step-type: Scale AGENT_TIMEOUT_MS based on step type. QA generation steps need 15-20min, engineer edit steps need 5min. Flat 5min timeout caused 5 consecutive QA agent deaths
-- [ ] scoped-test-execution: Engineers only run their own tests during implementation. Full suite runs once after merge. Prevents parallel pytest deadlocks (26 competing processes observed)
+## Sprint 7 — Planned
+- [ ] codebase-aware-agent-context: Agents in Sprint 2+ should see what was built in prior sprints — not just high-level summaries but actual file contents and structure. Feed codebase layout and key file excerpts into agent context.
+- [ ] read-before-write-enforcement: Verify that agents actually read all input artifacts before producing output. Add a structured discovery phase before generation, with validation that required files were accessed.
+- [ ] progressive-retry-with-scope-narrowing: When a step fails twice, third attempt gets narrower scope (split oversized tasks into sub-tasks) rather than retrying identical prompt
 
 ## Ready (prioritized, next sprint)
-- codebase-aware-agent-context: Agents in Sprint 2+ should see what was built in prior sprints — not just high-level summaries but actual file contents and structure. Feed codebase layout and key file excerpts into agent context.
-- read-before-write-enforcement: Verify that agents actually read all input artifacts before producing output. Add a structured discovery phase before generation, with validation that required files were accessed.
 - resource-aware-agent-scheduling: Add concurrency limits to parallel agent execution. Cap parallelism (e.g., max 2 agents) or detect CPU contention and queue excess agents
-- progressive-retry-with-scope-narrowing: When a step fails twice, third attempt gets narrower scope (split oversized tasks into sub-tasks) rather than retrying identical prompt
 - checkpoint-resume-for-subagents: Pre-summarize completed discovery work so retries skip re-reading all specs and jump straight to generation
 
 ## Inbox (unprioritized)
@@ -22,6 +19,9 @@
 - multi-device-sync: Sync project state across devices — source: user request
 
 ## Done
+- [x] adopt-existing-project: Register existing repos in Raptor, scaffold only missing pieces, discover project context (Sprint 6)
+- [x] agent-timeout-scaling-by-step-type: Step-aware timeout scaling — QA 15min, Engineer 10min, Architect 7min, configurable cascade (Sprint 6)
+- [x] scoped-test-execution: Feature-scoped test commands during implementation, full suite at review only, framework auto-detection (Sprint 6)
 - [x] agent-parallel-execution: Parallel agent execution where TEAM.md allows it (Sprint 5)
 - [x] multi-engineer-coordination: Multi-engineer support with feature branch isolation and conflict resolution (Sprint 5)
 - [x] dino-agent-names: Dinosaur-themed names for each agent role (Sprint 5)
