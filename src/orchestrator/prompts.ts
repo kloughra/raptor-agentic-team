@@ -3,6 +3,8 @@ import * as path from "path";
 import { Role, SPRINT_WORKFLOW } from "./workflow";
 import { DinoIdentity, resolveDinoNames, buildDinoIdentityPreamble } from "./dino";
 
+const TEAM_MD_MAX_SIZE = 8 * 1024; // 8KB cap for TEAM.md injection
+
 /**
  * Role descriptions extracted from TEAM.md structure.
  * These are used as system prompts for subagents.
@@ -107,6 +109,43 @@ export function buildRolePrompt(role: Role, dinoNames?: Record<Role, DinoIdentit
   const names = dinoNames || resolveDinoNames();
   const preamble = buildDinoIdentityPreamble(role, names);
   return `${preamble}\n\n${ROLE_PROMPTS[role]}`;
+}
+
+/**
+ * Read and inject TEAM.md from the project directory.
+ * Falls back to bundled template if project doesn't have one.
+ * Caps output at TEAM_MD_MAX_SIZE to avoid context bloat.
+ */
+export function buildTeamMdContext(projectPath: string): string {
+  const projectTeamMd = path.join(projectPath, "TEAM.md");
+  let content: string | null = null;
+
+  if (fs.existsSync(projectTeamMd)) {
+    try {
+      content = fs.readFileSync(projectTeamMd, "utf-8");
+    } catch {
+      // Fall through to bundled template
+    }
+  }
+
+  // Fallback: try bundled template
+  if (!content) {
+    try {
+      const bundledPath = path.join(__dirname, "..", "..", "template", "TEAM.md");
+      if (fs.existsSync(bundledPath)) {
+        content = fs.readFileSync(bundledPath, "utf-8");
+      }
+    } catch {
+      // No TEAM.md available
+    }
+  }
+
+  if (!content) return "";
+
+  const truncated = content.slice(0, TEAM_MD_MAX_SIZE);
+  const suffix = content.length > TEAM_MD_MAX_SIZE ? "\n\n[... truncated for context size ...]" : "";
+
+  return `--- TEAM.md (Process Definition) ---\n${truncated}${suffix}\n--- End TEAM.md ---`;
 }
 
 /**

@@ -9,12 +9,12 @@ export { renderProgressTable } from "./progress";
 export { buildCheckpointPrompt } from "./checkpoints";
 export type { CheckpointPrompt } from "./checkpoints";
 
-export { buildRolePrompt, buildStepContext } from "./prompts";
+export { buildRolePrompt, buildStepContext, buildTeamMdContext } from "./prompts";
 
 export { spawnAgent } from "./agents";
 export type { AgentResult } from "./agents";
 
-export { runSprintFromStep, resumeSprint, MAX_RETRY_ATTEMPTS } from "./runner";
+export { runSprintFromStep, resumeSprint, MAX_RETRY_ATTEMPTS, resolveExpectedOutputPaths, validateRequiredOutputs } from "./runner";
 export type { SprintResult } from "./runner";
 
 export { executeMerge, updatePrDodChecklist, generateDodSummary } from "./merge";
