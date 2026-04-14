@@ -16,7 +16,7 @@ import {
 import { resolveBacklogPath } from "../backlog-parser";
 import { renderProgressTable } from "./progress";
 import { buildCheckpointPrompt, CheckpointPrompt } from "./checkpoints";
-import { buildRolePrompt, buildStepContext } from "./prompts";
+import { buildRolePrompt, buildStepContext, buildTeamMdContext } from "./prompts";
 import { spawnAgent } from "./agents";
 import { executeMerge, updatePrDodChecklist } from "./merge";
 import { generateSprintSummary, loadSprintSummaries } from "./summary";
@@ -96,6 +96,74 @@ function validateStepOutputs(
 }
 
 /**
+ * Validate that required output files exist after an agent completes.
+ * Returns list of missing files. Empty list = all outputs present.
+ */
+export function validateRequiredOutputs(
+  step: WorkflowStep,
+  featureSlug: string,
+  projectPath: string
+): string[] {
+  if (step.expectedOutputs.length === 0) return [];
+
+  const missing: string[] = [];
+  const resolvedPaths = resolveExpectedOutputPaths(step.expectedOutputs, featureSlug);
+
+  for (const relPath of resolvedPaths) {
+    const fullPath = path.join(projectPath, relPath);
+    if (!fs.existsSync(fullPath)) {
+      missing.push(relPath);
+    }
+  }
+
+  // For patterns with double-star globs (e.g. src/**/*.ts) that can't resolve
+  // to a single file, fall back to directory-level check: at least one file must exist
+  for (const pattern of step.expectedOutputs) {
+    if (!pattern.includes("**")) continue; // Already handled by exact path check above
+
+    // Check that the base directory has at least one file
+    // For "src/**/*.ts", check "src/" has files (recursively would be ideal, but
+    // a flat check on the base directory is sufficient for validation)
+    const baseDir = pattern.split("**")[0]; // "src/" from "src/**/*.ts"
+    const dir = path.join(projectPath, baseDir);
+    if (!fs.existsSync(dir)) {
+      missing.push(pattern);
+      continue;
+    }
+    try {
+      const files = fs.readdirSync(dir).filter((f) => {
+        try { return fs.statSync(path.join(dir, f)).isFile(); } catch { return false; }
+      });
+      if (files.length === 0) {
+        missing.push(pattern);
+      }
+    } catch {
+      missing.push(pattern);
+    }
+  }
+
+  return missing;
+}
+
+/**
+ * Resolve expectedOutputs glob patterns to concrete file paths using the feature slug.
+ * e.g. "docs/specs/*.md" → "docs/specs/{slug}.md"
+ *
+ * Patterns with double-star globs (e.g. src/**\/*.ts) are not resolvable to a
+ * single file path — they're filtered out and handled by directory-level checks
+ * in validateRequiredOutputs instead.
+ */
+export function resolveExpectedOutputPaths(
+  expectedOutputs: string[],
+  featureSlug: string
+): string[] {
+  return expectedOutputs
+    .filter((p) => !p.includes("**")) // Drop double-star globs — not resolvable
+    .map((pattern) => pattern.replace("*", featureSlug))
+    .filter((p) => !p.includes("*")); // Drop any remaining unresolvable patterns
+}
+
+/**
  * Build a task description for the subagent based on the step and sprint context.
  */
 function buildTaskDescription(
@@ -110,7 +178,16 @@ function buildTaskDescription(
   task += `Feature slug: ${featureSlug}\n`;
 
   if (step.expectedOutputs.length > 0) {
-    task += `Expected outputs: ${step.expectedOutputs.join(", ")}\n`;
+    const resolvedPaths = resolveExpectedOutputPaths(step.expectedOutputs, featureSlug);
+    if (resolvedPaths.length > 0) {
+      task += `\n**REQUIRED OUTPUT FILES — You MUST create these files:**\n`;
+      for (const filePath of resolvedPaths) {
+        task += `- ${filePath}\n`;
+      }
+      task += `\nThis step will FAIL validation if these files do not exist on disk after you complete. `;
+      task += `Do NOT skip file creation even if the content seems to already exist elsewhere (e.g. in the backlog). `;
+      task += `The file is the deliverable.\n`;
+    }
   }
 
   if (feedback) {
@@ -490,6 +567,12 @@ export async function runSprintFromStep(
       const systemPrompt = buildRolePrompt(step.role);
       let context = buildStepContext(step.step, projectPath, featureSlug);
 
+      // Layer 1: Inject TEAM.md so agents see the canonical process definition
+      const teamMdContext = buildTeamMdContext(projectPath);
+      if (teamMdContext) {
+        context = `${teamMdContext}\n\n${context}`;
+      }
+
       // Inject cross-sprint context if available
       if (sprintSummaries) {
         context = `--- Previous Sprint Context ---\n${sprintSummaries}\n\n--- Current Sprint Artifacts ---\n${context}`;
@@ -616,6 +699,20 @@ export async function runSprintFromStep(
       }
 
       if (result.exitCode === 0) {
+        // Layer 3: Validate required outputs actually exist on disk
+        const missingOutputs = validateRequiredOutputs(step, featureSlug, projectPath);
+        if (missingOutputs.length > 0) {
+          // Agent said it's done but didn't create required files — treat as failure
+          stepState.failures.push({
+            attempt,
+            errorSummary: `Agent completed (exit 0) but did not create required output files: ${missingOutputs.join(", ")}. The step is not complete until these files exist on disk.`,
+            timestamp: new Date().toISOString(),
+            hadPartialArtifacts: validateStepOutputs(step, projectPath).length > 0,
+          });
+          saveSprintState(projectSlug, sprint, state);
+          continue; // Retry — the agent will see this failure in retry context
+        }
+
         succeeded = true;
         break;
       }
