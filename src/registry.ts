@@ -35,6 +35,16 @@ export class Registry {
     return project !== undefined;
   }
 
+  async updateProject(name: string, updates: Partial<Omit<ProjectEntry, "name" | "slug">>): Promise<void> {
+    const data = this.read();
+    const idx = data.projects.findIndex((p) => p.name === name);
+    if (idx === -1) {
+      throw new Error(`Project '${name}' not found.`);
+    }
+    data.projects[idx] = { ...data.projects[idx], ...updates };
+    this.write(data);
+  }
+
   async addProject(entry: ProjectEntry): Promise<void> {
     const data = this.read();
     if (data.projects.some((p) => p.name === entry.name)) {

@@ -317,12 +317,19 @@ export async function adoptProject(
     };
   }
 
-  // Check for duplicate name
-  if (await ctx.registry.projectExists(args.name)) {
-    return {
-      status: "error",
-      message: `Project '${args.name}' already exists. Use list_projects to see all projects.`,
-    };
+  // Check for duplicate name — allow upsert if same path
+  let isReAdoption = false;
+  const existingByName = await ctx.registry.findProject(args.name);
+  if (existingByName) {
+    if (existingByName.path === args.path) {
+      // Same name, same path — this is a re-adoption (upsert)
+      isReAdoption = true;
+    } else {
+      return {
+        status: "error",
+        message: `Project '${args.name}' is already registered at a different path: '${existingByName.path}'.`,
+      };
+    }
   }
 
   // Validate path exists and is a directory
@@ -349,14 +356,16 @@ export async function adoptProject(
     };
   }
 
-  // Check path not already registered
-  const projects = await ctx.registry.listProjects();
-  const existingByPath = projects.find((p) => p.path === args.path);
-  if (existingByPath) {
-    return {
-      status: "error",
-      message: `This repo is already tracked as '${existingByPath.name}'.`,
-    };
+  // Check path not already registered under a different name
+  if (!isReAdoption) {
+    const projects = await ctx.registry.listProjects();
+    const existingByPath = projects.find((p) => p.path === args.path);
+    if (existingByPath) {
+      return {
+        status: "error",
+        message: `This repo is already tracked as '${existingByPath.name}'.`,
+      };
+    }
   }
 
   const projectPath = args.path;
@@ -429,16 +438,17 @@ export async function adoptProject(
     scaffoldedFiles.push("docs/backlog.md");
   }
 
-  // Context discovery — generate project-context.md
+  // Context discovery — generate or regenerate project-context.md
+  // Always regenerate on re-adoption to pick up codebase changes
   let contextDiscovered = false;
   const contextPath = path.join(projectPath, "docs", "project-context.md");
-  if (!fs.existsSync(contextPath)) {
+  if (!fs.existsSync(contextPath) || isReAdoption) {
     try {
       fs.mkdirSync(path.join(projectPath, "docs"), { recursive: true });
       const context = discoverProjectContext(projectPath);
       const contextDoc = generateContextDocument(context, args.name);
       fs.writeFileSync(contextPath, contextDoc);
-      scaffoldedFiles.push("docs/project-context.md");
+      scaffoldedFiles.push(isReAdoption ? "docs/project-context.md (regenerated)" : "docs/project-context.md");
       contextDiscovered = true;
     } catch {
       // Context discovery is best-effort
@@ -451,35 +461,50 @@ export async function adoptProject(
   if (scaffoldedFiles.length > 0) {
     try {
       const git = simpleGit(projectPath);
-      await git.add(scaffoldedFiles.map((f) => path.join(projectPath, f)));
-      await git.commit(`[BOOTSTRAP] Architect: adopted existing project ${args.name}`);
+      // Filter out annotation suffixes for git add paths
+      const filePaths = scaffoldedFiles.map((f) => {
+        const clean = f.replace(/\s*\(.*\)$/, "");
+        return path.join(projectPath, clean);
+      });
+      await git.add(filePaths);
+      const verb = isReAdoption ? "re-adopted" : "adopted";
+      await git.commit(`[BOOTSTRAP] Architect: ${verb} existing project ${args.name}`);
     } catch {
       // Non-critical — files are written even if commit fails
     }
   }
 
-  // Register project
+  // Register or update project
   const now = new Date().toISOString();
-  const entry: ProjectEntry = {
-    name: args.name,
-    slug: args.name,
-    description: args.description,
-    path: projectPath,
-    createdAt: now,
-  };
-  await ctx.registry.addProject(entry);
+  if (isReAdoption) {
+    // Update existing entry
+    await ctx.registry.updateProject(args.name, {
+      description: args.description,
+    });
+  } else {
+    const entry: ProjectEntry = {
+      name: args.name,
+      slug: args.name,
+      description: args.description,
+      path: projectPath,
+      createdAt: now,
+    };
+    await ctx.registry.addProject(entry);
+  }
 
+  const verb = isReAdoption ? "re-adopted" : "adopted";
   return {
     status: "success",
     project: {
       name: args.name,
       path: projectPath,
-      createdAt: now,
+      createdAt: isReAdoption ? existingByName!.createdAt : now,
     },
     scaffoldedFiles,
     skippedFiles,
     contextDiscovered,
-    message: `Project '${args.name}' adopted from ${projectPath}. ${scaffoldedFiles.length} files scaffolded, ${skippedFiles.length} skipped. Next step: populate the backlog and run a sprint.`,
+    isReAdoption,
+    message: `Project '${args.name}' ${verb} from ${projectPath}. ${scaffoldedFiles.length} files scaffolded, ${skippedFiles.length} skipped. Next step: populate the backlog and run a sprint.`,
   };
 }
 
