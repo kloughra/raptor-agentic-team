@@ -335,6 +335,65 @@ describe("adoptProject — backlog reformatting", () => {
     expect(content).toContain("Implement SSO login");
   });
 
+  it("re-adopts an already registered project (upsert)", async () => {
+    const repoPath = path.join(tmpDir, "upsert-repo");
+    fs.mkdirSync(repoPath, { recursive: true });
+    const git = simpleGit(repoPath);
+    await git.init();
+
+    fs.writeFileSync(path.join(repoPath, "BACKLOG.md"), "# Backlog\n- Feature Alpha\n- Feature Beta");
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# App");
+    await git.add("-A");
+    await git.commit("initial");
+
+    // First adoption
+    const result1 = await adoptProject(ctx, {
+      path: repoPath,
+      name: "upsert-app",
+      description: "First description",
+    });
+    expect(result1.status).toBe("success");
+    expect(result1.isReAdoption).toBe(false);
+
+    // Re-adoption — same name, same path
+    const result2 = await adoptProject(ctx, {
+      path: repoPath,
+      name: "upsert-app",
+      description: "Updated description",
+    });
+    expect(result2.status).toBe("success");
+    expect(result2.isReAdoption).toBe(true);
+    expect(String(result2.message)).toContain("re-adopted");
+
+    // Backlog should be reformatted
+    const backlog = fs.readFileSync(path.join(repoPath, "docs", "backlog.md"), "utf-8");
+    expect(backlog).toContain("Feature Alpha");
+    expect(backlog).toContain("Feature Beta");
+
+    // Context should be regenerated
+    const contextPath = path.join(repoPath, "docs", "project-context.md");
+    expect(fs.existsSync(contextPath)).toBe(true);
+  });
+
+  it("rejects re-adoption with same name but different path", async () => {
+    const repoPath1 = path.join(tmpDir, "path-conflict-1");
+    const repoPath2 = path.join(tmpDir, "path-conflict-2");
+    for (const rp of [repoPath1, repoPath2]) {
+      fs.mkdirSync(rp, { recursive: true });
+      const g = simpleGit(rp);
+      await g.init();
+      fs.writeFileSync(path.join(rp, "README.md"), "# App");
+      await g.add("-A");
+      await g.commit("initial");
+    }
+
+    await adoptProject(ctx, { path: repoPath1, name: "conflict-app", description: "First" });
+
+    const result = await adoptProject(ctx, { path: repoPath2, name: "conflict-app", description: "Second" });
+    expect(result.status).toBe("error");
+    expect(String(result.message)).toContain("different path");
+  });
+
   it("does not reformat if docs/backlog.md already exists in Raptor format", async () => {
     const repoPath = path.join(tmpDir, "raptor-format-repo");
     fs.mkdirSync(path.join(repoPath, "docs"), { recursive: true });
