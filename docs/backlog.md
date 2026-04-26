@@ -1,6 +1,6 @@
 # Backlog
 
-## Sprint 8 — In Progress
+## Sprint 8 — Planned
 - [ ] multi-feature-sprint-dispatch: Wire `multi-runner.ts` (`detectSprintFeatures`, `createFeatureStates`, `featureBranchName`) into `runSprintFromStep`. Today the runner picks only the first slug from the sprint section via `extractFeatureSlug` (runner.ts:312) and never iterates the remaining items, so multi-item sprints silently drop everything after the first. Unblocks every future multi-item sprint — source: dora-metrics adopt-and-run failure 2026-04-26
 
 ## Ready (prioritized, next sprint)
