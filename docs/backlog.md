@@ -1,6 +1,13 @@
 # Backlog
 
+## Sprint 8 — In Progress
+- [ ] backlog-format-error-with-example: When `run_sprint` rejects a backlog with "No backlog items found for sprint N" (tools.ts:687), include the expected format inline (`## Sprint N` / `- [ ] slug: description`) and a doc link. dora-metrics user spent ~3min in an edit→run→error loop reverse-engineering the parser — source: session ea5bc6fd 2026-04-26
+
 ## Ready (prioritized, next sprint)
+- adopt-project-git-init: `adopt_project` should detect non-git directories and either auto-init (with prompt) or fail with a clear "run `git init` first" message. Today the failure surfaces as an opaque simple-git error — source: session ea5bc6fd 2026-04-26
+- reset-sprint-tool: First-class `reset_sprint` MCP tool to clear escalated/failed state. Today users must `rm ~/.raptor/{project}/sprint-N.json` by hand to escape circuit-breaker escalation — source: session ea5bc6fd 2026-04-26
+- early-exit-on-stdin-warning: Defense-in-depth on top of the stdin hotfix — short-circuit the retry loop when agent output is just the claude CLI's stdin-wait warning. Avoids the ~14min the dora-metrics user spent watching the 3-attempt circuit breaker — source: session ea5bc6fd 2026-04-26
+- surface-tool-errors-to-openstory: Raptor tools return failures as `{status: "error"}` strings, not exceptions, so OpenStory's error detector reports `[]` for sessions that clearly failed. Either throw on failure or emit a structured error event — source: session ea5bc6fd 2026-04-26
 - hotfix-workflow-tool: Add a `run_hotfix` MCP tool that enforces a lightweight SDLC: create hotfix branch → implement + test → PR → user approval → merge. Tracked in sprint state like a mini-sprint. Prevents untracked code changes.
 - pre-flight-branch-check: Before any agent writes code, verify it's on a tracked branch (sprint or hotfix). If on main, refuse to proceed and prompt for branch creation. Enforced in `spawnAgent` and runner loop.
 - change-proposal-tool: Add a `propose_change` MCP tool that creates a backlog entry and routes to the correct workflow (sprint vs hotfix) based on scope. Forces all changes through tracking before any code is written.
