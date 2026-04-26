@@ -8,6 +8,9 @@
 - checkpoint-resume-for-subagents: Pre-summarize completed discovery work so retries skip re-reading all specs and jump straight to generation
 
 ## Inbox (unprioritized)
+- multi-feature-sprint-dispatch: Wire `multi-runner.ts` (`detectSprintFeatures`, `createFeatureStates`, `featureBranchName`) into `runSprintFromStep`. Today the runner picks only the first slug from the sprint section via `extractFeatureSlug` (runner.ts:312) and never iterates the remaining items, so multi-item sprints silently drop everything after the first — source: dora-metrics adopt-and-run failure 2026-04-26
+- sprint-branch-auto-create: Orchestrator should `git checkout -B sprint-{N}/{slug}` at sprint start instead of recording whatever branch HEAD points to (runner.ts:282-306). Today sprint state captures `master` and the agents commit to main, contradicting CLAUDE.md "All sprint commits go on the sprint branch" — source: dora-metrics adopt-and-run failure 2026-04-26
+- partial-artifacts-gitkeep-filter: `validateStepOutputs` (runner.ts:75-96) lists every file in expected-output dirs without filtering `.gitkeep`, so `hadPartialArtifacts` is permanently `true` after bootstrap and masks the real signal of whether anything was written — source: dora-metrics adopt-and-run failure 2026-04-26
 - agent-assisted-backlog-reformat: When deterministic backlog parsing fails to categorize items (tables, prose, non-standard formats), fall back to spawning a PO agent to reformat. Handles edge cases the regex parser misses — source: post-mortem from hotfix/backlog-reformat-on-adopt
 - mcp-remote-hosting: Host Raptor remotely for multi-device access (laptop, desktop, phone) — source: user request
 - mcp-github-integration: Create GitHub repos and push during bootstrap — source: user request
