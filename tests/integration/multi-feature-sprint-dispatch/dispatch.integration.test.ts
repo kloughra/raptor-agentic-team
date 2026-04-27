@@ -38,16 +38,16 @@ import {
   allFeaturesComplete,
   anyFeaturesEscalated,
   deriveSprintStatus,
-} from "../../src/orchestrator/multi-runner";
+} from "../../../src/orchestrator/multi-runner";
 import {
   createInitialState,
   SprintState,
   FeatureState,
   CheckpointState,
-} from "../../src/orchestrator/state";
-import { renderProgressTable } from "../../src/orchestrator/progress";
-import { buildCheckpointPrompt, CheckpointPrompt } from "../../src/orchestrator/checkpoints";
-import { SPRINT_WORKFLOW } from "../../src/orchestrator/workflow";
+} from "../../../src/orchestrator/state";
+import { renderProgressTable } from "../../../src/orchestrator/progress";
+import { buildCheckpointPrompt, CheckpointPrompt } from "../../../src/orchestrator/checkpoints";
+import { SPRINT_WORKFLOW } from "../../../src/orchestrator/workflow";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -238,7 +238,7 @@ describe("AC #4: Per-feature branch", () => {
     // The architecture mandates an `ensureFeatureBranch` export from
     // src/orchestrator/multi-runner.ts. Until the engineer wires it, we
     // dynamically import and skip gracefully.
-    const mod = (await import("../../src/orchestrator/multi-runner")) as Record<string, unknown>;
+    const mod = (await import("../../../src/orchestrator/multi-runner")) as Record<string, unknown>;
     if (typeof mod.ensureFeatureBranch !== "function") {
       console.warn("ensureFeatureBranch not implemented yet — skipping (will pass once wired)");
       return;
@@ -261,7 +261,7 @@ describe("AC #4: Per-feature branch", () => {
   });
 
   it("ensureFeatureBranch is idempotent when already on the branch", async () => {
-    const mod = (await import("../../src/orchestrator/multi-runner")) as Record<string, unknown>;
+    const mod = (await import("../../../src/orchestrator/multi-runner")) as Record<string, unknown>;
     if (typeof mod.ensureFeatureBranch !== "function") return;
     type EFBResult = { created: boolean; checkedOut: boolean; error?: string };
     type EnsureFn = (p: string, s: number, slug: string) => Promise<EFBResult>;
@@ -282,7 +282,7 @@ describe("AC #4: Per-feature branch", () => {
   });
 
   it("ensureFeatureBranch checks out an existing non-divergent branch", async () => {
-    const mod = (await import("../../src/orchestrator/multi-runner")) as Record<string, unknown>;
+    const mod = (await import("../../../src/orchestrator/multi-runner")) as Record<string, unknown>;
     if (typeof mod.ensureFeatureBranch !== "function") return;
     type EFBResult = { created: boolean; checkedOut: boolean; error?: string };
     type EnsureFn = (p: string, s: number, slug: string) => Promise<EFBResult>;
@@ -304,7 +304,7 @@ describe("AC #4: Per-feature branch", () => {
   });
 
   it("ensureFeatureBranch surfaces a clear error on divergent state", async () => {
-    const mod = (await import("../../src/orchestrator/multi-runner")) as Record<string, unknown>;
+    const mod = (await import("../../../src/orchestrator/multi-runner")) as Record<string, unknown>;
     if (typeof mod.ensureFeatureBranch !== "function") return;
     type EFBResult = { created: boolean; checkedOut: boolean; error?: string };
     type EnsureFn = (p: string, s: number, slug: string) => Promise<EFBResult>;
