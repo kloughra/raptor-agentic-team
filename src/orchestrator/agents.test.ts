@@ -61,15 +61,45 @@ describe("spawnAgent", () => {
 
     const [cmd, args] = spawnMock.mock.calls[0];
     expect(cmd).toBe("claude");
-    expect(args).toEqual([
-      "--print",
-      "--system-prompt",
-      "sys",
-      "--append-system-prompt",
-      "ctx",
-      "do the thing",
-    ]);
+    expect(args[0]).toBe("--print");
+    expect(args[args.length - 1]).toBe("do the thing");
+    const sysIdx = args.indexOf("--system-prompt");
+    const appendIdx = args.indexOf("--append-system-prompt");
+    expect(args[sysIdx + 1]).toBe("sys");
+    expect(args[appendIdx + 1]).toBe("ctx");
     expect(result).toEqual({ output: "done", exitCode: 0 });
+  });
+
+  it("passes --permission-mode acceptEdits and an --allowedTools list so writes actually persist", async () => {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const promise = spawnAgent("po", "sys", "ctx", "task", "/tmp/project");
+    child.stdout.push("ok");
+    child.stdout.push(null);
+    await flush();
+    child.emit("close", 0);
+    await promise;
+
+    const [, args] = spawnMock.mock.calls[0];
+    const modeIdx = args.indexOf("--permission-mode");
+    const allowIdx = args.indexOf("--allowedTools");
+    expect(modeIdx).toBeGreaterThanOrEqual(0);
+    expect(args[modeIdx + 1]).toBe("acceptEdits");
+    expect(allowIdx).toBeGreaterThanOrEqual(0);
+
+    const allowed = args[allowIdx + 1] as string;
+    expect(allowed).toContain("Read");
+    expect(allowed).toContain("Write");
+    expect(allowed).toContain("Edit");
+    expect(allowed).toContain("Bash(git commit *)");
+    expect(allowed).toContain("Bash(npm test *)");
+    expect(allowed).toContain("Bash(gh pr create *)");
+    // explicitly NOT allowed — destructive surface stays denied
+    expect(allowed).not.toContain("Bash(rm");
+    expect(allowed).not.toContain("Bash(sudo");
+    expect(allowed).not.toContain("Bash(curl");
+    expect(allowed).not.toContain("Bash(ssh");
   });
 
   it("returns stderr as output when the process exits non-zero with empty stdout", async () => {

@@ -10,9 +10,59 @@ const AGENT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_BUFFER_BYTES = 10 * 1024 * 1024; // 10MB
 
 /**
+ * Tools the subagent is permitted to invoke. `--permission-mode acceptEdits`
+ * auto-approves Read/Write/Edit; the Bash patterns explicitly enumerate the
+ * shell commands the workflow needs (git, npm/npx, gh) and exclude the
+ * destructive surface (rm, sudo, curl, ssh, kill, chmod, chown, mv).
+ *
+ * Without this list, `claude --print` waits on the absent prompt channel for
+ * each tool-permission request, the model sees the calls "complete" but the
+ * filesystem effects are silently dropped, and the agent appears to do work
+ * that never lands. See PR follow-up to #13.
+ */
+const AGENT_ALLOWED_TOOLS = [
+  "Read",
+  "Write",
+  "Edit",
+  "Glob",
+  "Grep",
+  "TodoWrite",
+  "Bash(git status)",
+  "Bash(git status *)",
+  "Bash(git log *)",
+  "Bash(git diff *)",
+  "Bash(git branch *)",
+  "Bash(git add *)",
+  "Bash(git commit *)",
+  "Bash(git checkout *)",
+  "Bash(git push *)",
+  "Bash(git fetch *)",
+  "Bash(git rev-parse *)",
+  "Bash(git remote *)",
+  "Bash(npm test *)",
+  "Bash(npm run *)",
+  "Bash(npm ci)",
+  "Bash(npm install)",
+  "Bash(npx jest *)",
+  "Bash(npx tsc *)",
+  "Bash(gh pr create *)",
+  "Bash(gh pr view *)",
+  "Bash(gh pr merge *)",
+  "Bash(gh pr comment *)",
+  "Bash(gh pr list *)",
+  "Bash(gh pr edit *)",
+  "Bash(ls *)",
+  "Bash(cat *)",
+  "Bash(find *)",
+  "Bash(pwd)",
+];
+
+/**
  * Spawn a claude CLI subagent with a role-scoped system prompt and context.
  *
- * Uses `claude --print` for non-interactive output.
+ * Uses `claude --print` for non-interactive output, with `acceptEdits`
+ * permission mode plus an explicit Bash allowlist (see AGENT_ALLOWED_TOOLS)
+ * so the subagent can actually persist its work without interactive approval.
  * The subagent runs in the project directory so it can read/write files and use git.
  */
 export function spawnAgent(
@@ -26,6 +76,10 @@ export function spawnAgent(
   return new Promise((resolve) => {
     const args = [
       "--print",
+      "--permission-mode",
+      "acceptEdits",
+      "--allowedTools",
+      AGENT_ALLOWED_TOOLS.join(","),
       "--system-prompt",
       systemPrompt,
       "--append-system-prompt",
