@@ -13,6 +13,15 @@ Sprint 5 introduced `multi-runner.ts` (`detectSprintFeatures`, `createFeatureSta
 
 This spec is the **wiring** spec — most of the building blocks exist. The gap is the dispatch path inside `runSprintFromStep` and the per-feature loop semantics.
 
+### Dependency on `sprint-branch-auto-create`
+
+Per-feature branch handling (AC #4) depends on the orchestrator being able to create and check out branches programmatically. That capability is the subject of `sprint-branch-auto-create` (backlog inbox), which is currently absent — today the runner only records whatever branch HEAD points to (`runner.ts:282-306`). Resolution required during architecture design, in one of two shapes:
+
+- **Bundle:** The architect folds branch-creation logic into this work, satisfying both this spec and `sprint-branch-auto-create` in a single PR.
+- **Sequence:** `sprint-branch-auto-create` lands as a prerequisite hotfix before this spec's engineer step runs.
+
+Either is acceptable. The Architect must call out their choice in the architecture document so QA tests target the resolved behavior.
+
 ## Acceptance Criteria
 
 1. **Detection on entry.** When `runSprintFromStep` initializes (or resumes) sprint state, it calls `detectSprintFeatures(projectPath, sprint)` to enumerate all `- [ ] slug:` items in the sprint section of `docs/backlog.md`.
@@ -27,7 +36,7 @@ This spec is the **wiring** spec — most of the building blocks exist. The gap 
 10. **Backward compatibility — single-feature.** When `detectSprintFeatures` returns exactly one slug, the runner takes the existing single-feature path: `state.features` stays `null`, output validation, branch handling, and progress rendering behave exactly as they do today.
 11. **Backward compatibility — empty sprint.** When `detectSprintFeatures` returns zero slugs, the runner returns the existing error result (`"Could not extract feature slug from backlog. Ensure the sprint section has items in the format: - [ ] slug: description"`) and marks the sprint `failed`.
 12. **Resume safety.** Resuming a sprint that was started in multi-feature mode preserves the existing `state.features` array — the runner does not re-seed it from `detectSprintFeatures` once features exist in state. Already-`complete` per-feature steps are skipped on resume just like single-feature mode skips already-`complete` top-level steps.
-13. **Checkpoint behavior.** When a step has a `checkpointAfter`, the checkpoint fires once per feature in multi-feature mode (so the user can review each feature's spec, design, PR, etc. independently). The checkpoint payload identifies which feature it belongs to.
+13. **Checkpoint behavior — streaming, one feature at a time.** When a step has a `checkpointAfter`, checkpoints **stream** in multi-feature mode: one checkpoint pause per feature, presented sequentially in the order features appear in `state.features`. The user resolves each feature's checkpoint independently before the next one fires. The checkpoint payload identifies which feature it belongs to. Rationale: per-feature review is the explicit goal of multi-feature dispatch (each spec, design, PR, and demo deserves independent approval); batched checkpoints would either force all-or-nothing decisions or require the user to hold N specs in their head simultaneously, defeating the purpose. Configurable batch-vs-stream policy is out of scope for this spec — defer to a follow-up if user feedback requests it.
 14. **Tool surface unchanged.** The `run_sprint` and `resume_sprint` MCP tool inputs and return shapes do not change. Multi-feature mode is fully driven by the contents of `docs/backlog.md`.
 
 ## Edge Cases
@@ -46,7 +55,9 @@ This spec is the **wiring** spec — most of the building blocks exist. The gap 
 - **Dynamic feature add/remove mid-sprint.** Once `state.features` is seeded, the set is frozen for the life of the sprint state file.
 - **Refactoring `extractFeatureSlug` away.** It may remain as a single-feature helper or be removed by the Architect — implementation choice, not a requirement of this spec.
 - **Updating `multi-runner.ts` helper signatures.** The existing exports are assumed correct; this spec only requires wiring them in.
+- **Configurable checkpoint batching.** AC #13 mandates streaming. A `batchCheckpoints` config knob (or per-step override) is a follow-up item, not part of this spec.
 
 ## Open Questions
 
-- None at spec time. If the Architect identifies a need to change `multi-runner.ts` exports or `SprintState.features` shape during design, raise back to PO before proceeding.
+- **Branch-creation strategy** (see Dependency section above): does the Architect bundle `sprint-branch-auto-create` into this work, or sequence it as a prerequisite? Decision belongs in the architecture document.
+- If the Architect identifies a need to change `multi-runner.ts` exports or `SprintState.features` shape during design, raise back to PO before proceeding.
