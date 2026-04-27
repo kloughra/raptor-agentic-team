@@ -89,17 +89,56 @@ describe("spawnAgent", () => {
     expect(allowIdx).toBeGreaterThanOrEqual(0);
 
     const allowed = args[allowIdx + 1] as string;
+    // Built-in tools
     expect(allowed).toContain("Read");
     expect(allowed).toContain("Write");
     expect(allowed).toContain("Edit");
+    // git + gh
     expect(allowed).toContain("Bash(git commit *)");
-    expect(allowed).toContain("Bash(npm test *)");
+    expect(allowed).toContain("Bash(git push *)");
     expect(allowed).toContain("Bash(gh pr create *)");
-    // explicitly NOT allowed — destructive surface stays denied
+    // JS/TS ecosystem
+    expect(allowed).toContain("Bash(npm test *)");
+    expect(allowed).toContain("Bash(pnpm *)");
+    expect(allowed).toContain("Bash(yarn *)");
+    expect(allowed).toContain("Bash(bun *)");
+    // Python
+    expect(allowed).toContain("Bash(python3 *)");
+    expect(allowed).toContain("Bash(pytest *)");
+    expect(allowed).toContain("Bash(poetry *)");
+    // Rust
+    expect(allowed).toContain("Bash(cargo *)");
+    // Go
+    expect(allowed).toContain("Bash(go *)");
+    // Ruby
+    expect(allowed).toContain("Bash(bundle *)");
+    expect(allowed).toContain("Bash(rspec *)");
+    // JVM
+    expect(allowed).toContain("Bash(mvn *)");
+    expect(allowed).toContain("Bash(gradle *)");
+    // Docker
+    expect(allowed).toContain("Bash(docker build *)");
+    expect(allowed).toContain("Bash(docker compose *)");
+    // Generic build
+    expect(allowed).toContain("Bash(make *)");
+
+    // explicitly NOT allowed — destructive / privilege / network / cloud / DB
     expect(allowed).not.toContain("Bash(rm");
     expect(allowed).not.toContain("Bash(sudo");
     expect(allowed).not.toContain("Bash(curl");
+    expect(allowed).not.toContain("Bash(wget");
     expect(allowed).not.toContain("Bash(ssh");
+    expect(allowed).not.toContain("Bash(scp");
+    expect(allowed).not.toContain("Bash(chmod");
+    expect(allowed).not.toContain("Bash(chown");
+    expect(allowed).not.toContain("Bash(kill");
+    expect(allowed).not.toContain("Bash(dd ");
+    expect(allowed).not.toContain("Bash(aws ");
+    expect(allowed).not.toContain("Bash(gcloud ");
+    expect(allowed).not.toContain("Bash(kubectl ");
+    expect(allowed).not.toContain("Bash(terraform ");
+    expect(allowed).not.toContain("Bash(psql ");
+    expect(allowed).not.toContain("Bash(mysql ");
   });
 
   it("returns stderr as output when the process exits non-zero with empty stdout", async () => {

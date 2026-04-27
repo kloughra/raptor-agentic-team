@@ -12,8 +12,16 @@ const MAX_BUFFER_BYTES = 10 * 1024 * 1024; // 10MB
 /**
  * Tools the subagent is permitted to invoke. `--permission-mode acceptEdits`
  * auto-approves Read/Write/Edit; the Bash patterns explicitly enumerate the
- * shell commands the workflow needs (git, npm/npx, gh) and exclude the
- * destructive surface (rm, sudo, curl, ssh, kill, chmod, chown, mv).
+ * shell commands the workflow needs across common engineering ecosystems
+ * (git/gh, JS/TS, Python, Rust, Go, Ruby, JVM, Docker, generic build tools).
+ *
+ * What stays denied (the load-bearing exclusions):
+ *   - Privilege escalation: sudo, su, doas
+ *   - Destructive shell: rm, chmod, chown, kill, pkill, dd
+ *   - Network: curl, wget, ssh, scp, rsync, nc
+ *   - Cloud control planes: aws, gcloud, az, kubectl, terraform, helm
+ *   - Direct DB clients: psql, mysql, sqlite3, redis-cli (DROP TABLE risk)
+ *   - Anything not enumerated below
  *
  * Without this list, `claude --print` waits on the absent prompt channel for
  * each tool-permission request, the model sees the calls "complete" but the
@@ -21,40 +29,158 @@ const MAX_BUFFER_BYTES = 10 * 1024 * 1024; // 10MB
  * that never lands. See PR follow-up to #13.
  */
 const AGENT_ALLOWED_TOOLS = [
+  // Built-in tools (auto-approved by acceptEdits but listed for explicitness)
   "Read",
   "Write",
   "Edit",
   "Glob",
   "Grep",
   "TodoWrite",
+
+  // git — full read + write surface, including history rewrite (engineers need
+  // rebase/reset for cleanup; PR review provides the safety net)
   "Bash(git status)",
   "Bash(git status *)",
   "Bash(git log *)",
   "Bash(git diff *)",
+  "Bash(git show *)",
   "Bash(git branch *)",
   "Bash(git add *)",
   "Bash(git commit *)",
   "Bash(git checkout *)",
+  "Bash(git switch *)",
   "Bash(git push *)",
+  "Bash(git pull *)",
   "Bash(git fetch *)",
+  "Bash(git merge *)",
+  "Bash(git rebase *)",
+  "Bash(git stash *)",
+  "Bash(git tag *)",
+  "Bash(git reset *)",
+  "Bash(git restore *)",
+  "Bash(git rm *)",
+  "Bash(git mv *)",
   "Bash(git rev-parse *)",
   "Bash(git remote *)",
-  "Bash(npm test *)",
-  "Bash(npm run *)",
-  "Bash(npm ci)",
-  "Bash(npm install)",
-  "Bash(npx jest *)",
-  "Bash(npx tsc *)",
+  "Bash(git config *)",
+
+  // GitHub CLI
   "Bash(gh pr create *)",
   "Bash(gh pr view *)",
   "Bash(gh pr merge *)",
   "Bash(gh pr comment *)",
   "Bash(gh pr list *)",
   "Bash(gh pr edit *)",
+  "Bash(gh pr checkout *)",
+  "Bash(gh issue create *)",
+  "Bash(gh issue view *)",
+  "Bash(gh issue list *)",
+  "Bash(gh issue comment *)",
+  "Bash(gh repo view *)",
+  "Bash(gh release view *)",
+  "Bash(gh release list *)",
+  "Bash(gh run view *)",
+  "Bash(gh run list *)",
+  "Bash(gh workflow view *)",
+  "Bash(gh workflow list *)",
+  "Bash(gh api *)",
+
+  // JavaScript / TypeScript
+  "Bash(npm test *)",
+  "Bash(npm run *)",
+  "Bash(npm ci)",
+  "Bash(npm install)",
+  "Bash(npm install *)",
+  "Bash(npm exec *)",
+  "Bash(npx jest *)",
+  "Bash(npx tsc *)",
+  "Bash(npx vitest *)",
+  "Bash(npx eslint *)",
+  "Bash(npx prettier *)",
+  "Bash(npx biome *)",
+  "Bash(pnpm *)",
+  "Bash(yarn *)",
+  "Bash(bun *)",
+  "Bash(bunx *)",
+  "Bash(deno *)",
+  "Bash(node *)",
+  "Bash(tsc *)",
+  "Bash(jest *)",
+  "Bash(vitest *)",
+  "Bash(eslint *)",
+  "Bash(prettier *)",
+
+  // Python
+  "Bash(python *)",
+  "Bash(python3 *)",
+  "Bash(pip *)",
+  "Bash(pip3 *)",
+  "Bash(pipx *)",
+  "Bash(poetry *)",
+  "Bash(uv *)",
+  "Bash(pytest *)",
+  "Bash(ruff *)",
+  "Bash(black *)",
+  "Bash(mypy *)",
+  "Bash(flake8 *)",
+  "Bash(isort *)",
+
+  // Rust
+  "Bash(cargo *)",
+  "Bash(rustc *)",
+  "Bash(rustup *)",
+  "Bash(rustfmt *)",
+
+  // Go
+  "Bash(go *)",
+  "Bash(gofmt *)",
+  "Bash(golangci-lint *)",
+
+  // Ruby
+  "Bash(bundle *)",
+  "Bash(bundler *)",
+  "Bash(gem *)",
+  "Bash(rake *)",
+  "Bash(rspec *)",
+  "Bash(rubocop *)",
+
+  // JVM (Maven, Gradle; project-local wrappers via ./gradlew, ./mvnw)
+  "Bash(mvn *)",
+  "Bash(gradle *)",
+  "Bash(./gradlew *)",
+  "Bash(./mvnw *)",
+
+  // Docker (build, run, compose — for projects that ship containers)
+  "Bash(docker build *)",
+  "Bash(docker compose *)",
+  "Bash(docker-compose *)",
+  "Bash(docker run *)",
+  "Bash(docker exec *)",
+  "Bash(docker ps *)",
+  "Bash(docker logs *)",
+  "Bash(docker images *)",
+
+  // Generic build / task runners
+  "Bash(make *)",
+  "Bash(cmake *)",
+  "Bash(just *)",
+  "Bash(task *)",
+
+  // Read-only filesystem inspection (agents should prefer Read/Glob/Grep tools,
+  // but these are common reflexes)
   "Bash(ls *)",
   "Bash(cat *)",
   "Bash(find *)",
+  "Bash(head *)",
+  "Bash(tail *)",
+  "Bash(wc *)",
+  "Bash(file *)",
+  "Bash(stat *)",
   "Bash(pwd)",
+  "Bash(which *)",
+  "Bash(echo *)",
+  "Bash(true)",
+  "Bash(false)",
 ];
 
 /**
