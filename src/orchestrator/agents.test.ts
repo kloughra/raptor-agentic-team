@@ -61,15 +61,84 @@ describe("spawnAgent", () => {
 
     const [cmd, args] = spawnMock.mock.calls[0];
     expect(cmd).toBe("claude");
-    expect(args).toEqual([
-      "--print",
-      "--system-prompt",
-      "sys",
-      "--append-system-prompt",
-      "ctx",
-      "do the thing",
-    ]);
+    expect(args[0]).toBe("--print");
+    expect(args[args.length - 1]).toBe("do the thing");
+    const sysIdx = args.indexOf("--system-prompt");
+    const appendIdx = args.indexOf("--append-system-prompt");
+    expect(args[sysIdx + 1]).toBe("sys");
+    expect(args[appendIdx + 1]).toBe("ctx");
     expect(result).toEqual({ output: "done", exitCode: 0 });
+  });
+
+  it("passes --permission-mode acceptEdits and an --allowedTools list so writes actually persist", async () => {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const promise = spawnAgent("po", "sys", "ctx", "task", "/tmp/project");
+    child.stdout.push("ok");
+    child.stdout.push(null);
+    await flush();
+    child.emit("close", 0);
+    await promise;
+
+    const [, args] = spawnMock.mock.calls[0];
+    const modeIdx = args.indexOf("--permission-mode");
+    const allowIdx = args.indexOf("--allowedTools");
+    expect(modeIdx).toBeGreaterThanOrEqual(0);
+    expect(args[modeIdx + 1]).toBe("acceptEdits");
+    expect(allowIdx).toBeGreaterThanOrEqual(0);
+
+    const allowed = args[allowIdx + 1] as string;
+    // Built-in tools
+    expect(allowed).toContain("Read");
+    expect(allowed).toContain("Write");
+    expect(allowed).toContain("Edit");
+    // git + gh
+    expect(allowed).toContain("Bash(git commit *)");
+    expect(allowed).toContain("Bash(git push *)");
+    expect(allowed).toContain("Bash(gh pr create *)");
+    // JS/TS ecosystem
+    expect(allowed).toContain("Bash(npm test *)");
+    expect(allowed).toContain("Bash(pnpm *)");
+    expect(allowed).toContain("Bash(yarn *)");
+    expect(allowed).toContain("Bash(bun *)");
+    // Python
+    expect(allowed).toContain("Bash(python3 *)");
+    expect(allowed).toContain("Bash(pytest *)");
+    expect(allowed).toContain("Bash(poetry *)");
+    // Rust
+    expect(allowed).toContain("Bash(cargo *)");
+    // Go
+    expect(allowed).toContain("Bash(go *)");
+    // Ruby
+    expect(allowed).toContain("Bash(bundle *)");
+    expect(allowed).toContain("Bash(rspec *)");
+    // JVM
+    expect(allowed).toContain("Bash(mvn *)");
+    expect(allowed).toContain("Bash(gradle *)");
+    // Docker
+    expect(allowed).toContain("Bash(docker build *)");
+    expect(allowed).toContain("Bash(docker compose *)");
+    // Generic build
+    expect(allowed).toContain("Bash(make *)");
+
+    // explicitly NOT allowed — destructive / privilege / network / cloud / DB
+    expect(allowed).not.toContain("Bash(rm");
+    expect(allowed).not.toContain("Bash(sudo");
+    expect(allowed).not.toContain("Bash(curl");
+    expect(allowed).not.toContain("Bash(wget");
+    expect(allowed).not.toContain("Bash(ssh");
+    expect(allowed).not.toContain("Bash(scp");
+    expect(allowed).not.toContain("Bash(chmod");
+    expect(allowed).not.toContain("Bash(chown");
+    expect(allowed).not.toContain("Bash(kill");
+    expect(allowed).not.toContain("Bash(dd ");
+    expect(allowed).not.toContain("Bash(aws ");
+    expect(allowed).not.toContain("Bash(gcloud ");
+    expect(allowed).not.toContain("Bash(kubectl ");
+    expect(allowed).not.toContain("Bash(terraform ");
+    expect(allowed).not.toContain("Bash(psql ");
+    expect(allowed).not.toContain("Bash(mysql ");
   });
 
   it("returns stderr as output when the process exits non-zero with empty stdout", async () => {
