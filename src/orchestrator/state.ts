@@ -26,6 +26,11 @@ export interface CheckpointState {
   status: "pending" | "approved" | "changes-requested";
   feedback: string | null;
   resolvedAt: string | null;
+  /**
+   * Multi-feature mode only: which feature slug this checkpoint pertains to.
+   * Single-feature mode leaves this null/undefined.
+   */
+  feature?: string | null;
 }
 
 export interface DodChecklist {
@@ -56,6 +61,12 @@ export interface SprintState {
   dod: DodChecklist;
   retroProposals: unknown[] | null;
   features?: FeatureState[] | null;
+  /**
+   * Multi-feature mode only: which feature is currently being dispatched.
+   * Drives streaming-checkpoint resume (architecture §6, §8). Single-feature
+   * sprints leave this null for the life of the state file.
+   */
+  currentFeatureSlug?: string | null;
 }
 
 function resolveRaptorHome(): string {
@@ -93,9 +104,13 @@ export function loadSprintState(
     };
     state.retroProposals = state.retroProposals ?? null;
     state.features = state.features ?? null;
+    state.currentFeatureSlug = state.currentFeatureSlug ?? null;
     for (const step of state.steps) {
       step.attempts = step.attempts ?? 0;
       step.failures = step.failures ?? [];
+    }
+    for (const cp of state.checkpoints) {
+      cp.feature = cp.feature ?? null;
     }
 
     return state;
@@ -136,6 +151,7 @@ export function createInitialState(
     },
     retroProposals: null,
     features: null,
+    currentFeatureSlug: null,
     steps: steps.map((s) => ({
       step: s.step,
       role: s.role,

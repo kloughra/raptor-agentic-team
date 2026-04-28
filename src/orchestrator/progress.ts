@@ -23,6 +23,11 @@ export function renderProgressTable(
   lines.push("| Step | Role | Task | Status |");
   lines.push("|------|------|------|--------|");
 
+  // In multi-feature mode, top-level state.steps for steps 1–9 stays "pending"
+  // for the lifetime of the sprint (per-feature subtables are the source of
+  // truth). Annotate those rows so the user is not confused (AC #9).
+  const isMultiFeatureMode = !!(state.features && state.features.length > 1);
+
   for (const step of state.steps) {
     let statusDisplay: string;
 
@@ -32,6 +37,10 @@ export function renderProgressTable(
       statusDisplay = `⚠ attempt ${step.attempts}/${MAX_RETRY_ATTEMPTS}`;
     } else {
       statusDisplay = STATUS_ICONS[step.status] || "⬜";
+    }
+
+    if (isMultiFeatureMode && step.step <= 9) {
+      statusDisplay = `${statusDisplay} (per-feature)`;
     }
 
     const roleDisplay = formatRoleDisplay(step.role as Role, names);
