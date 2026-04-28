@@ -1,7 +1,7 @@
 # Backlog
 
 ## Sprint 8 — Planned
-*(Sprint 8 complete — see Done. PR #15 merged 2026-04-27.)*
+- [x] multi-feature-sprint-dispatch: complete — see Done section. PR #15 merged 2026-04-27.
 
 ## Ready (prioritized, next sprint)
 - expected-outputs-glob-resolution: `resolveExpectedOutputPaths` (`runner.ts:156`) does `.replace("*", featureSlug)` on patterns like `tests/integration/*`, producing literal paths instead of matching real files via glob. The QA agent for Sprint 8 wrote `tests/integration/{slug}.integration.test.ts` per repo convention twice and got rejected; on attempt 3 it pivoted to creating a directory at the literal path to satisfy the validator. Replace string substitution with proper glob matching (e.g. `picomatch` or `fast-glob`) — promoted from Inbox per Sprint 8 demo feedback (PO triage 2026-04-27)
@@ -18,6 +18,7 @@
 - checkpoint-resume-for-subagents: Pre-summarize completed discovery work so retries skip re-reading all specs and jump straight to generation
 
 ## Inbox (unprioritized)
+- shared-steps-bypass-slug-detection: `runSprintFromStep` runs `detectSprintFeatures` at the top of the function regardless of which step is being resumed. When Sprint 8 was resumed at step 13 (Apply retro improvements — a sprint-shared step that the runner handles deterministically without an agent or slug), the sprint section had been edited to a comment-only state and the dispatcher errored out with "Could not extract feature slug from backlog" before reaching step 13. Required a manual sentinel `- [x]` item in the backlog to unblock. Fix: skip slug detection when resuming at a step > 9 (sprint-shared steps don't need feature dispatch) — source: Sprint 8 step-13 resume failure 2026-04-28
 - live-claude-smoke-test: Add a single non-mocked integration test that shells out to the real `claude` CLI with the orchestrator's actual spawn args and asserts the subprocess can produce some output (e.g. `claude --version`-equivalent) without permission failure. Today every `tests/integration/*.ts` mocks `spawnAgent` at the boundary, so a regression in spawn args (stdin, permissions, allowed tools, model flags) is invisible until a real `run_sprint` hits it. The permission-mode and stdin bugs (PR #13 + this hotfix) would both have been caught by such a test — source: post-mortem of hotfix/agent-permission-allowlist 2026-04-27
 - partial-artifacts-gitkeep-filter: `validateStepOutputs` (runner.ts:75-96) lists every file in expected-output dirs without filtering `.gitkeep`, so `hadPartialArtifacts` is permanently `true` after bootstrap and masks the real signal of whether anything was written — source: dora-metrics adopt-and-run failure 2026-04-26
 - agent-assisted-backlog-reformat: When deterministic backlog parsing fails to categorize items (tables, prose, non-standard formats), fall back to spawning a PO agent to reformat. Handles edge cases the regex parser misses — source: post-mortem from hotfix/backlog-reformat-on-adopt
