@@ -1,9 +1,11 @@
 # Backlog
 
 ## Sprint 8 — Planned
-- [ ] multi-feature-sprint-dispatch: Wire `multi-runner.ts` (`detectSprintFeatures`, `createFeatureStates`, `featureBranchName`) into `runSprintFromStep`. Today the runner picks only the first slug from the sprint section via `extractFeatureSlug` (runner.ts:312) and never iterates the remaining items, so multi-item sprints silently drop everything after the first. Unblocks every future multi-item sprint — source: dora-metrics adopt-and-run failure 2026-04-26
+*(Sprint 8 complete — see Done. PR #15 merged 2026-04-27.)*
 
 ## Ready (prioritized, next sprint)
+- expected-outputs-glob-resolution: `resolveExpectedOutputPaths` (`runner.ts:156`) does `.replace("*", featureSlug)` on patterns like `tests/integration/*`, producing literal paths instead of matching real files via glob. The QA agent for Sprint 8 wrote `tests/integration/{slug}.integration.test.ts` per repo convention twice and got rejected; on attempt 3 it pivoted to creating a directory at the literal path to satisfy the validator. Replace string substitution with proper glob matching (e.g. `picomatch` or `fast-glob`) — promoted from Inbox per Sprint 8 demo feedback (PO triage 2026-04-27)
+- artifact-injection-directory-handling: `artifact-injection.ts:84` calls `fs.readFileSync(fullPath, "utf-8")` without checking whether the path is a file. When QA's expected-output workaround left a directory at `tests/integration/{slug}`, step 4 (PO Review tests) threw EISDIR before the agent spawned, killing the sprint mid-flight. Fix: `statSync(fullPath).isFile()` gate before read; for directories, either recurse or skip with a warning entry — promoted from Inbox per Sprint 8 demo feedback (PO triage 2026-04-27)
 - backlog-format-error-with-example: When `run_sprint` rejects a backlog with "No backlog items found for sprint N" (tools.ts:687), include the expected format inline (`## Sprint N` / `- [ ] slug: description`) and a doc link. dora-metrics user spent ~3min in an edit→run→error loop reverse-engineering the parser — source: session ea5bc6fd 2026-04-26
 - adopt-project-git-init: `adopt_project` should detect non-git directories and either auto-init (with prompt) or fail with a clear "run `git init` first" message. Today the failure surfaces as an opaque simple-git error — source: session ea5bc6fd 2026-04-26
 - reset-sprint-tool: First-class `reset_sprint` MCP tool to clear escalated/failed state. Today users must `rm ~/.raptor/{project}/sprint-N.json` by hand to escape circuit-breaker escalation — source: session ea5bc6fd 2026-04-26
@@ -16,11 +18,10 @@
 - checkpoint-resume-for-subagents: Pre-summarize completed discovery work so retries skip re-reading all specs and jump straight to generation
 
 ## Inbox (unprioritized)
-- expected-outputs-glob-resolution: `resolveExpectedOutputPaths` (`runner.ts:156`) does `.replace("*", featureSlug)` on patterns like `tests/integration/*`, producing literal paths (`tests/integration/multi-feature-sprint-dispatch`) instead of matching real files via glob. The QA agent for Sprint 8 wrote `tests/integration/{slug}.integration.test.ts` per repo convention twice and got rejected; on attempt 3 it pivoted to creating a directory at the literal path to satisfy the validator. Replace string substitution with proper glob matching (e.g. `picomatch` or `fast-glob`) so the validator accepts files that actually match the pattern — source: Sprint 8 QA step retry pattern 2026-04-27
-- artifact-injection-directory-handling: `artifact-injection.ts:84` calls `fs.readFileSync(fullPath, "utf-8")` without checking whether the path is a file. When QA's expected-output workaround left a directory at `tests/integration/{slug}`, step 4 (PO Review tests) threw EISDIR before the agent spawned, killing the sprint mid-flight. Fix: `statSync(fullPath).isFile()` gate before read; for directories, either recurse (read all files inside) or skip with a warning entry — source: Sprint 8 step-4 EISDIR 2026-04-27
 - live-claude-smoke-test: Add a single non-mocked integration test that shells out to the real `claude` CLI with the orchestrator's actual spawn args and asserts the subprocess can produce some output (e.g. `claude --version`-equivalent) without permission failure. Today every `tests/integration/*.ts` mocks `spawnAgent` at the boundary, so a regression in spawn args (stdin, permissions, allowed tools, model flags) is invisible until a real `run_sprint` hits it. The permission-mode and stdin bugs (PR #13 + this hotfix) would both have been caught by such a test — source: post-mortem of hotfix/agent-permission-allowlist 2026-04-27
 - partial-artifacts-gitkeep-filter: `validateStepOutputs` (runner.ts:75-96) lists every file in expected-output dirs without filtering `.gitkeep`, so `hadPartialArtifacts` is permanently `true` after bootstrap and masks the real signal of whether anything was written — source: dora-metrics adopt-and-run failure 2026-04-26
 - agent-assisted-backlog-reformat: When deterministic backlog parsing fails to categorize items (tables, prose, non-standard formats), fall back to spawning a PO agent to reformat. Handles edge cases the regex parser misses — source: post-mortem from hotfix/backlog-reformat-on-adopt
+- batch-checkpoints-config: Optional `batchCheckpoints` config knob to collapse per-feature checkpoints in multi-feature sprints into a single batched approval. Deferred at Sprint 8 demo — current per-feature streaming behavior preferred until we see a sprint with >3 features and approval friction is the bottleneck — source: Sprint 8 demo question #3 (PO triage 2026-04-27)
 - mcp-remote-hosting: Host Raptor remotely for multi-device access (laptop, desktop, phone) — source: user request
 - mcp-github-integration: Create GitHub repos and push during bootstrap — source: user request
 - mcp-cicd-setup: Configure CI/CD pipelines in bootstrapped repos — source: user request
@@ -49,3 +50,21 @@
 - [x] sprint-completion-on-merge: PR merge as sprint exit gate — auto-merge after demo approval, sprint ends on merge (Sprint 3)
 - [x] mcp-agent-orchestration: Core orchestration loop with run_sprint and resume_sprint MCP tools, user checkpoints, sprint state persistence (Sprint 2)
 - [x] mcp-project-bootstrap: Raptor MCP server with bootstrap_project, list_projects, and get_project_status tools (Sprint 1)
+
+## Sprint 8 Demo Feedback (2026-04-27)
+
+**Demo:** [docs/demos/sprint-8-multi-feature-sprint-dispatch.md](demos/sprint-8-multi-feature-sprint-dispatch.md)
+**PR:** #15 (merged dc869a2)
+
+| Demo question | PO triage | Outcome |
+|---|---|---|
+| 1. Acceptance vs spec intent | ACCEPTED — 14/14 ACs covered, 435/435 tests pass, no regressions | Sprint 8 closed |
+| 2. Bundling `sprint-branch-auto-create` + `request-changes-feedback-injection` | ACCEPTED — shared code path, single review surface | Both items moved to Done |
+| 3. Streaming checkpoints (one-per-feature, sequential) | CONFIRMED as designed — defer batching until friction data exists | Filed `batch-checkpoints-config` in Inbox |
+| 4. Deferred plumbing bugs (`expected-outputs-glob-resolution`, `artifact-injection-directory-handling`) | PROMOTE both Inbox → Ready, top of queue for Sprint 9 — both hit Sprint 8 itself and masked correct QA output | Promoted |
+| 5. Anything else | None | — |
+
+**Net backlog mutations:**
+- Promoted Inbox → Ready: `expected-outputs-glob-resolution`, `artifact-injection-directory-handling`
+- Added to Inbox: `batch-checkpoints-config` (deferred follow-up from AC #13)
+- Sprint 8 — Planned section emptied (all items in Done)
