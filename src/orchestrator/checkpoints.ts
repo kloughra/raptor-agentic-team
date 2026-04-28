@@ -7,6 +7,11 @@ export interface CheckpointPrompt {
   context: string;
   options: string[];
   feedbackLabel: string;
+  /**
+   * Multi-feature mode only: identifies which feature this checkpoint pertains to.
+   * Single-feature mode leaves this undefined.
+   */
+  feature?: string;
 }
 
 const CHECKPOINT_CONFIG: Record<
@@ -48,13 +53,14 @@ const CHECKPOINT_CONFIG: Record<
 export function buildCheckpointPrompt(
   type: CheckpointType,
   artifactSummary: string,
-  dinoNames?: Record<Role, DinoIdentity>
+  dinoNames?: Record<Role, DinoIdentity>,
+  featureSlug?: string
 ): CheckpointPrompt {
   const config = CHECKPOINT_CONFIG[type];
   const names = dinoNames || resolveDinoNames();
   const roleName = formatHandoffRole(config.triggeredBy, names);
 
-  const context = [
+  const baseContext = [
     `**${roleName}** is requesting your review.`,
     "",
     artifactSummary,
@@ -66,11 +72,25 @@ export function buildCheckpointPrompt(
     config.feedbackLabel,
   ].join("\n");
 
-  return {
+  // Multi-feature mode: annotate the title with the feature slug and prefix the
+  // context with a feature header so the user always knows which feature this
+  // checkpoint is for (architecture §5, AC #13).
+  const title = featureSlug ? `${config.title} — ${featureSlug}` : config.title;
+  const context = featureSlug
+    ? `**Feature:** ${featureSlug}\n\n${baseContext}`
+    : baseContext;
+
+  const result: CheckpointPrompt = {
     type,
-    title: config.title,
+    title,
     context,
     options: ["approve", "request-changes"],
     feedbackLabel: config.feedbackLabel,
   };
+
+  if (featureSlug) {
+    result.feature = featureSlug;
+  }
+
+  return result;
 }
