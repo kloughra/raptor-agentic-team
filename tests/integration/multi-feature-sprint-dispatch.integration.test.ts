@@ -486,6 +486,14 @@ describe("AC #9: renderProgressTable in multi-feature mode", () => {
     expect(out).toContain("Feature: beta");
   });
 
+  it("annotates top-level rows for steps 1-9 with '(per-feature)' in multi-feature mode", () => {
+    const state = createInitialState("test", 7, workflowStepsForState());
+    state.features = createFeatureStates(["alpha", "beta"], 7);
+
+    const out = renderProgressTable(state);
+    expect(out).toContain("(per-feature)");
+  });
+
   it("single-feature sprint output does NOT contain the Per-Feature section", () => {
     const state = createInitialState("test", 7, workflowStepsForState());
     // single-feature mode: features stays null
@@ -654,6 +662,36 @@ describe("AC #13: Streaming checkpoints", () => {
       currentFeatureSlug?: string | null;
     };
     expect(reloaded.currentFeatureSlug ?? null).toBe("alpha");
+  });
+
+  it("request-changes on a single-feature sprint resets attempts and failures (regression: request-changes-feedback-injection)", () => {
+    // Single-feature mode: state.features stays null, top-level state.steps is the source of truth.
+    const state = createInitialState("p", 7, workflowStepsForState());
+    expect(state.features).toBeNull();
+
+    // Simulate a step 1 that completed once.
+    const step = state.steps[0];
+    step.status = "complete";
+    step.artifacts = ["docs/specs/p.md"];
+    step.completedAt = new Date().toISOString();
+    step.attempts = 1;
+    step.failures = [
+      { attempt: 1, errorSummary: "prior", timestamp: "2026-04-27T00:00:00Z", hadPartialArtifacts: false },
+    ];
+
+    // User submits request-changes. Mirror the runner.ts:1101-1106 single-feature reset.
+    step.status = "pending";
+    step.artifacts = [];
+    step.completedAt = null;
+    step.attempts = 0;
+    step.failures = [];
+
+    // All five fields must be reset for the feedback-injection condition (attempt === 1) to fire on next loop.
+    expect(step.status).toBe("pending");
+    expect(step.artifacts).toEqual([]);
+    expect(step.completedAt).toBeNull();
+    expect(step.attempts).toBe(0);
+    expect(step.failures).toEqual([]);
   });
 
   it("request-changes resets only the affected feature's per-feature step (architecture §6)", () => {

@@ -1097,11 +1097,18 @@ export async function resumeSprint(
         );
       }
 
-      // Single-feature path (existing behavior): reset the top-level step.
+      // Single-feature path: reset the top-level step. attempts and failures
+      // must reset to 0/[] so the retry loop re-enters at attempt 1, where the
+      // feedback-injection condition (attempt === 1) actually fires. Without
+      // this, the next agent invocation receives a generic prompt and the
+      // user's review feedback is silently dropped — closing the
+      // request-changes-feedback-injection bug for the single-feature path.
       const currentStepState = state.steps[state.currentStep - 1];
       currentStepState.status = "pending";
       currentStepState.artifacts = [];
       currentStepState.completedAt = null;
+      currentStepState.attempts = 0;
+      currentStepState.failures = [];
 
       state.status = "in-progress";
       saveSprintState(projectSlug, sprint, state);
