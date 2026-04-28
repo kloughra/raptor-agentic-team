@@ -295,6 +295,9 @@ If an agent hits a blocker that cannot be resolved by consulting another role, i
 
 ---
 
+
+
+> **[Sprint Retro Improvement]** Add a fifth checkpoint row and accompanying guidance: "**Checkpoint 3a — Request-Changes Feedback Verification**: When the user (or PO) selects `request-changes` at any checkpoint, the orchestrator MUST surface the verbatim feedback in the next agent invocation's prompt. If the next agent's output does not reference or address the feedback, the PO must immediately escalate with `[ESCALATE] PO: feedback-injection appears broken — manual intervention required` rather than allowing silent loss of feedback. PO is responsible for verifying — at every checkpoint resolution — that prior `request-changes` feedback was actually incorporated before approving the next iteration."
 ## Sprint Workflow
 
 Each step lists its dependencies explicitly. Steps that share the same dependency **may run in parallel** where noted.
