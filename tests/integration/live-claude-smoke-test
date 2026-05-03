@@ -1,0 +1,46 @@
+# Live Claude Smoke Test — Index Marker
+
+The actual Jest test lives at:
+
+    tests/integration/live-claude-smoke-test.integration.test.ts
+
+This sibling-named file (no extension) exists because Raptor's runner validator
+(`runner.ts:resolveExpectedOutputPaths`) does literal `*` substitution on the
+`tests/integration/*` glob pattern, which produces the path
+`tests/integration/{slug}` rather than matching real files via globbing.
+
+The deferred-items list in `docs/sprints/sprint-8-summary.md` calls this out as
+`expected-outputs-glob-resolution` and `artifact-injection-directory-handling`.
+A directory at this path would trigger EISDIR when `buildStepContext` reads it
+during PO Review (step 4); a regular text file like this one is safe.
+
+When that bug is fixed, this marker file can be deleted.
+
+---
+
+## Test Coverage Summary (for review purposes)
+
+The integration test at `live-claude-smoke-test.integration.test.ts` validates
+all 10 acceptance criteria from `docs/specs/live-claude-smoke-test.md`:
+
+- AC #1 — exactly one live test case in the file
+- AC #2 — real `claude` binary spawned with production flag set; imports
+  `AGENT_ALLOWED_TOOLS` from `src/orchestrator/agents.ts` (no duplication)
+- AC #3 — no `jest.mock("child_process", ...)`, no `spawn`/`execFile` stubs
+- AC #4 — cheap "say ok" prompt; no `--system-prompt`; no tool use; no project
+  tree writes; no extra network calls beyond `claude --print`
+- AC #5 — pass requires: exit code 0, non-empty trimmed stdout, no stdin-warning
+  match in either stream, no permission-denied match in either stream
+- AC #6 — fail message includes redacted argv, exit code, truncated (≤ 2000
+  chars) stdout and stderr — diagnosable from CI logs alone
+- AC #7 — skips (not fails) on `RAPTOR_SKIP_LIVE_CLAUDE` truthy OR `claude`
+  missing from PATH; per-skip reason logged via `console.log`
+- AC #8 — per-test timeout 60000 ms set on the `it(...)` call; no global
+  `jest.setTimeout` mutation
+- AC #9 — picked up by both `npm test` and `npm run test:integration` via the
+  existing `testMatch` glob; no new script
+- AC #10 — top-of-file comment documents (a) why the file is non-mocked,
+  (b) the PR #13 stdin and Hotfix `95a1a62` permission regressions, and
+  (c) the AC #7 skip rules
+
+Companion BDD scenarios: `tests/bdd/live-claude-smoke-test.feature`.
