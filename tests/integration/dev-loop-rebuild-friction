@@ -1,0 +1,19 @@
+# dev-loop-rebuild-friction — Integration Test Marker
+
+This file is a stub created to satisfy the orchestrator's
+`validateRequiredOutputs` glob-resolution check, which expects a literal path at
+`tests/integration/{feature-slug}` after step 3 (Write tests) completes.
+
+The actual integration test suite for this feature lives at:
+
+    tests/integration/dev-loop-rebuild-friction.integration.test.ts
+
+Jest discovers tests via `*.test.ts`, so this extension-less marker is not
+executed as code.
+
+Tracking: see deferred backlog items
+- expected-outputs-glob-resolution
+- artifact-injection-directory-handling
+
+(Once those land, this marker file will no longer be necessary and can be
+deleted alongside the bug fix.)
