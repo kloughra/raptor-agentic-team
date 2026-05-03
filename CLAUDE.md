@@ -46,11 +46,19 @@ If the user asks for a quick change, respond: "I'll put this through a hotfix wo
 ## Build & Test Commands
 
 ```bash
-npm run build          # Compile TypeScript → dist/
+npm run dev            # Run the MCP server directly from TypeScript via tsx (dev loop)
+npm run dev:smoke      # Boot-smoke check — verifies the server boots under tsx without dist/
+npm run build          # Compile TypeScript → dist/ (production artifact)
 npm test               # Run all tests (unit + integration)
 npm run test:unit      # Unit tests only (src/**/*.test.ts)
 npm run test:integration  # Integration tests only (tests/integration/)
 ```
+
+`npm run dev` (and the tracked `.mcp.json`) launches `tsx src/index.ts` directly,
+so edits to `src/**/*.ts` take effect on the next `/mcp` reconnect with **no
+manual `npm run build` step**. Production builds still go through `tsc` and
+ship `dist/src/index.js` via the `bin` entry — see "Running the MCP Server"
+below.
 
 To run a single test file:
 ```bash
@@ -90,8 +98,21 @@ The bundled TEAM.md template lives at `template/TEAM.md` and is copied into `dis
 
 ## Running the MCP Server
 
+For local development, the tracked `.mcp.json` at the repo root configures Claude
+Code to launch the server directly from TypeScript via `tsx`:
+
 ```bash
-npm run build && node dist/src/index.js
+npm run dev   # equivalent to: npx tsx src/index.ts
 ```
 
-The `.mcp.json` at root configures Claude Code to use this as a local MCP server.
+On `/mcp` reconnect, Claude Code respawns the server under `npx tsx src/index.ts`,
+which JIT-compiles current source. **Edits to `src/**/*.ts` are picked up on the
+next reconnect — no manual `npm run build` is required.** A stale `dist/` on disk
+is never preferred (the dev entry point doesn't reference it).
+
+For published / production consumption (`npm install raptor`, the `bin: raptor`
+entry), the compiled JS in `dist/` is still used. Build first with `npm run
+build`, then `npm start` runs `node dist/src/index.js`.
+
+`tsx` is a `devDependency` only and is not installed in end-user runtime trees.
+See `docs/adr/ADR-002-tsx-dev-loop.md` for the rationale.

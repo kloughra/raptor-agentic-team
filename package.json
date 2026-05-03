@@ -9,6 +9,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/src/index.js",
+    "dev": "tsx src/index.ts",
+    "dev:smoke": "tsx scripts/dev-smoke.ts",
     "test": "jest",
     "test:unit": "jest --testPathPattern=src/",
     "test:integration": "jest --testPathPattern=tests/integration/"
@@ -29,6 +31,7 @@
     "@types/node": "^22.15.3",
     "jest": "^29.7.0",
     "ts-jest": "^29.3.4",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.3"
   }
 }
