@@ -1,7 +1,32 @@
 import * as fs from "fs";
 import * as path from "path";
 
-const BUNDLED_TEMPLATE_PATH = path.join(__dirname, "..", "..", "template", "TEAM.md");
+/**
+ * Resolve the bundled `template/TEAM.md` path under both runtime layouts:
+ *
+ *   - Production (compiled): this file lives at `dist/src/template.js`, so the
+ *     bundled template is two levels up at `<repo>/template/TEAM.md`.
+ *   - Development (tsx, no dist/): this file is loaded as `src/template.ts`,
+ *     so the template is one level up at `<repo>/template/TEAM.md`.
+ *
+ * Both candidates are tried in production-first order so the prod path takes
+ * precedence when both layouts exist on disk.
+ */
+function resolveBundledTemplatePath(): string {
+  const distLayout = path.join(__dirname, "..", "..", "template", "TEAM.md");
+  if (fs.existsSync(distLayout)) {
+    return distLayout;
+  }
+  const srcLayout = path.join(__dirname, "..", "template", "TEAM.md");
+  if (fs.existsSync(srcLayout)) {
+    return srcLayout;
+  }
+  // Fall back to the dist-layout path so error messages remain stable for
+  // production deployments where neither file exists (corrupt install).
+  return distLayout;
+}
+
+const BUNDLED_TEMPLATE_PATH = resolveBundledTemplatePath();
 
 export const SCAFFOLD_DIRS = [
   "docs/specs",
