@@ -28,7 +28,7 @@ const MAX_BUFFER_BYTES = 10 * 1024 * 1024; // 10MB
  * filesystem effects are silently dropped, and the agent appears to do work
  * that never lands. See PR follow-up to #13.
  */
-const AGENT_ALLOWED_TOOLS = [
+export const AGENT_ALLOWED_TOOLS = [
   // Built-in tools (auto-approved by acceptEdits but listed for explicitness)
   "Read",
   "Write",
