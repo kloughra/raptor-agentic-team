@@ -200,6 +200,16 @@ export function spawnAgent(
   timeoutMs?: number
 ): Promise<AgentResult> {
   return new Promise((resolve) => {
+    // The `--` end-of-options separator is load-bearing: claude CLI declares
+    // `--allowedTools <tools...>` as a Commander variadic option, which
+    // consumes every subsequent token until a `--`-prefixed flag. Today
+    // `--system-prompt` follows `--allowedTools` and incidentally terminates
+    // the variadic — but if the surrounding flags ever change (or are
+    // omitted, as the live-claude-smoke-test case demonstrated), the prompt
+    // positional gets silently absorbed as another tool name and claude
+    // exits with "Input must be provided either through stdin or as a prompt
+    // argument when using --print". `--` makes this robust regardless of
+    // ordering: everything after it is positional.
     const args = [
       "--print",
       "--permission-mode",
@@ -210,6 +220,7 @@ export function spawnAgent(
       systemPrompt,
       "--append-system-prompt",
       context,
+      "--",
       taskDescription,
     ];
 
