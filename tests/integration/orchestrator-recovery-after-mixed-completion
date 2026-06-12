@@ -1,0 +1,51 @@
+# Orchestrator Recovery After Mixed Completion — Index Marker
+
+The actual Jest test lives at:
+
+    tests/integration/orchestrator-recovery-after-mixed-completion.integration.test.ts
+
+This sibling-named file (no extension) exists because Raptor's runner validator
+(`runner.ts:resolveExpectedOutputPaths`) does literal `*` substitution on the
+`tests/integration/*` glob pattern, which produces the path
+`tests/integration/{slug}` rather than matching real files via globbing.
+
+The deferred-items list in `docs/sprints/sprint-8-summary.md` calls this out as
+`expected-outputs-glob-resolution` and `artifact-injection-directory-handling`.
+A directory at this path would trigger EISDIR when `buildStepContext` reads it
+during PO Review (step 4); a regular text file like this one is safe.
+
+When that bug is fixed, this marker file can be deleted.
+
+---
+
+## Test Coverage Summary (for review purposes)
+
+The integration test validates all 12 acceptance criteria from
+`docs/specs/orchestrator-recovery-after-mixed-completion.md`:
+
+- AC #1  — terminal Merge PR step (step 9) flips `feature.status = "complete"`
+           and bumps `currentStep`; non-terminal steps do not.
+- AC #2  — a mixed sprint (one complete, one escalated) finalizes as `escalated`,
+           never left `in-progress` (via `deriveSprintStatus`).
+- AC #3  — all-complete sprint finalizes `complete`; eligible for shared steps 10–13.
+- AC #4  — `resume_sprint` exposes an additive, optional `feature` selector;
+           legacy calls without it remain valid.
+- AC #5  — implicit single-target resume when exactly one feature is escalated.
+- AC #6  — explicit multi-target resume: >1 escalated errors and lists slugs;
+           a valid slug targets that feature.
+- AC #7  — per-feature step reset (`attempts=0`, `failures=[]`, `status=pending`),
+           feature→`in-progress`, sprint→`in-progress`, re-entry at the escalated
+           step, feedback injected.
+- AC #8  — completed sibling is byte-for-byte untouched by the resume.
+- AC #9  — re-escalation supported with a fresh 3-attempt budget, no cap; a
+           successful re-attempt finalizes an all-complete sprint.
+- AC #11 — `renderProgressTable` names the escalated feature and its step.
+- AC #12 — the escalated step lives under `state.features[i].steps`, not the
+           top-level `state.steps`; mixed sprints are resumable (no stale
+           "cannot be resumed" / "no escalated step found").
+
+Plus edge cases: all-features-escalated, genuinely-in-progress refusal,
+invalid/non-escalated `feature` slugs, `approve`-on-escalated no-op redirect,
+and the unchanged single-feature (`state.features` null) escalated-resume path.
+
+Companion BDD scenarios: `tests/bdd/orchestrator-recovery-after-mixed-completion.feature`.
