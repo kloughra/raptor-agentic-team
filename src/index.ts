@@ -207,6 +207,12 @@ async function main() {
         .string()
         .optional()
         .describe("Free-text feedback from the user"),
+      feature: z
+        .string()
+        .optional()
+        .describe(
+          "Optional feature slug to target when resuming a multi-feature sprint that has more than one escalated feature (e.g. 'live-claude-smoke-test'). Omit when exactly one feature is escalated — it is targeted implicitly."
+        ),
     },
     async (args) => {
       const result = await resumeSprintTool(ctx, args);

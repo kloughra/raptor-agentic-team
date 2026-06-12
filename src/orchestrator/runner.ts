@@ -278,6 +278,90 @@ function truncateErrorSummary(output: string): string {
 }
 
 /**
+ * Result of resolving which escalated feature a `request-changes` resume should
+ * target (multi-feature mode). Pure — performs no state mutation.
+ */
+export type ResumeTargetResolution =
+  | { ok: true; target: string }
+  | { ok: false; error: string };
+
+/**
+ * Resolve the escalated feature to re-engage for a multi-feature
+ * `request-changes` resume (AC #5, #6 + edge cases). Mirrors the architecture's
+ * "Resume routing semantics" table:
+ *   - exactly one escalated, no `feature` arg → target it implicitly (AC #5)
+ *   - >1 escalated, no `feature` arg → error listing all escalated slugs (AC #6)
+ *   - explicit `feature` that is escalated → target it
+ *   - explicit `feature` that is missing or not escalated → error naming valid slugs
+ *
+ * No mutation here — the runner mutates only on a successful resolve.
+ */
+export function resolveEscalatedResumeTarget(
+  features: FeatureState[],
+  feature: string | undefined
+): ResumeTargetResolution {
+  const escalated = features.filter((f) => f.status === "escalated");
+  const escalatedSlugs = escalated.map((f) => f.slug);
+
+  if (feature !== undefined) {
+    const match = features.find((f) => f.slug === feature);
+    if (!match || match.status !== "escalated") {
+      return {
+        ok: false,
+        error:
+          `Feature '${feature}' is not an escalated feature. ` +
+          `Escalated features: [${escalatedSlugs.join(", ")}]. ` +
+          `Re-run resume_sprint --action=request-changes --feature=<slug> with one of these.`,
+      };
+    }
+    return { ok: true, target: match.slug };
+  }
+
+  if (escalated.length === 1) {
+    return { ok: true, target: escalated[0].slug };
+  }
+
+  return {
+    ok: false,
+    error:
+      `Multiple features are escalated: [${escalatedSlugs.join(", ")}]. ` +
+      `Re-run with --feature=<slug> to choose which feature to re-engage.`,
+  };
+}
+
+/**
+ * Build a clear escalated-state message for a multi-feature sprint (AC #11):
+ * names each escalated feature, the step at which it stalled, and the exact
+ * resume command (with the `--feature=<slug>` selector required only when more
+ * than one feature is escalated).
+ */
+export function buildMultiFeatureEscalatedMessage(
+  state: SprintState,
+  sprint: number
+): string {
+  const escalated = (state.features ?? []).filter((f) => f.status === "escalated");
+  if (escalated.length === 0) {
+    return (
+      `Sprint ${sprint} is escalated — awaiting user intervention. ` +
+      `Run resume_sprint --action=request-changes --feedback="…" to re-engage.`
+    );
+  }
+
+  const lines = escalated.map((f) => {
+    const escStep = f.steps.find((s) => s.status === "escalated");
+    const stepDesc = escStep ? `step ${escStep.step} (${escStep.name})` : "an earlier step";
+    return `  • ${f.slug} at ${stepDesc}`;
+  });
+
+  const slugHint = escalated.length > 1 ? "--feature=<slug>" : "[--feature=<slug>]";
+  return (
+    `Sprint ${sprint} is escalated. Escalated feature(s):\n${lines.join("\n")}\n` +
+    `Run resume_sprint --action=request-changes --feedback="…" ${slugHint} to re-engage. ` +
+    `Completed sibling features are preserved.`
+  );
+}
+
+/**
  * Find the first duplicate slug in a list, or null if all are unique.
  */
 function findDuplicateSlug(slugs: string[]): string | null {
@@ -987,7 +1071,8 @@ export async function resumeSprint(
   projectSlug: string,
   sprint: number,
   action: "approve" | "request-changes",
-  feedback?: string
+  feedback?: string,
+  feature?: string
 ): Promise<SprintResult> {
   const state = loadSprintState(projectSlug, sprint);
   if (!state) {
@@ -1125,6 +1210,32 @@ export async function resumeSprint(
 
   // --- Resume from escalated ---
   if (state.status === "escalated") {
+    // Escalated features (multi-feature mode). Empty when single-feature OR when
+    // the escalation happened on a sprint-shared step (10-13), which lives on
+    // the top-level state.steps array.
+    const escalatedFeatures = (state.features ?? []).filter(
+      (f) => f.status === "escalated"
+    );
+
+    // Edge case: `approve` cannot finalize a stalled feature. Return a redirect
+    // message; do NOT mutate state.
+    if (action === "approve") {
+      const slugList =
+        escalatedFeatures.length > 0
+          ? escalatedFeatures.map((f) => f.slug).join(", ")
+          : "(see progress)";
+      return {
+        status: "error",
+        progress: renderProgressTable(state),
+        message:
+          `Sprint ${sprint} is escalated: feature(s) ${slugList} stalled at the circuit breaker. ` +
+          `approve cannot finalize a stalled feature. To re-engage, run ` +
+          `resume_sprint --action=request-changes --feedback="…" [--feature=<slug>]. ` +
+          `To abandon and restart a feature from scratch, use the reset path (reset-sprint-tool, separate).`,
+        state,
+      };
+    }
+
     if (!feedback) {
       return {
         status: "error",
@@ -1134,7 +1245,57 @@ export async function resumeSprint(
       };
     }
 
-    // Find the escalated step
+    // --- Multi-feature routing (AC #5, #6, #7, #12) ---
+    // Only when there is at least one escalated FEATURE. A multi-feature sprint
+    // that escalated on a shared step (10-13) has no escalated feature and falls
+    // through to the top-level state.steps search below.
+    if (state.features && escalatedFeatures.length > 0) {
+      const resolution = resolveEscalatedResumeTarget(state.features, feature);
+      if (!resolution.ok) {
+        // No mutation on a routing error (multi-target without feature, unknown
+        // or non-escalated slug).
+        return {
+          status: "error",
+          progress: renderProgressTable(state),
+          message: resolution.error,
+          state,
+        };
+      }
+
+      const targetFeature = state.features.find((f) => f.slug === resolution.target)!;
+      const targetStep = targetFeature.steps.find((s) => s.status === "escalated");
+      if (!targetStep) {
+        return {
+          status: "error",
+          progress: renderProgressTable(state),
+          message: `Feature '${targetFeature.slug}' is marked escalated but has no escalated step.`,
+          state,
+        };
+      }
+
+      // AC #7: reset the target feature's escalated step and re-enter. Sibling
+      // features are untouched (AC #8) — we only mutate this feature.
+      targetStep.attempts = 0;
+      targetStep.failures = [];
+      targetStep.status = "pending";
+      targetStep.artifacts = [];
+      targetStep.completedAt = null;
+      targetFeature.status = "in-progress";
+      targetFeature.currentStep = targetStep.step;
+      state.currentFeatureSlug = targetFeature.slug;
+      state.status = "in-progress";
+      saveSprintState(projectSlug, sprint, state);
+
+      return runSprintFromStep(
+        projectPath,
+        projectSlug,
+        sprint,
+        targetStep.step,
+        feedback
+      );
+    }
+
+    // --- Single-feature (or shared-step) path: search top-level state.steps ---
     const escalatedStep = state.steps.find((s) => s.status === "escalated");
     if (!escalatedStep) {
       return {
@@ -1409,14 +1570,22 @@ async function runMultiFeatureSprint(ctx: DispatchContext): Promise<SprintResult
     };
   }
 
+  // AC #7: when resuming with feedback, the affected feature was recorded in
+  // state.currentFeatureSlug by resumeSprint (escalated request-changes) or by
+  // the streaming-checkpoint resume. Capture it BEFORE the loop overwrites
+  // currentFeatureSlug so feedback is injected into the RESUMED feature's first
+  // dispatched step — not blindly into feature index 0, which may be a
+  // completed sibling that gets skipped.
+  const resumedFeatureSlug = feedback ? state.currentFeatureSlug ?? null : null;
+
   for (let i = fromStep - 1; i < SPRINT_WORKFLOW.length; i++) {
     const step = SPRINT_WORKFLOW[i];
     const isPerFeatureStep = step.step <= 9;
 
     if (isPerFeatureStep) {
-      // Per-feature dispatch (AC #3)
-      let anyEscalated = false;
-
+      // Per-feature dispatch (AC #3). Per-feature escalation/failure is recorded
+      // directly on feature.status; the loop-exit guard below consults the pure
+      // deriveSprintStatus reducer rather than a local flag (AC #2, #10).
       for (let fIdx = 0; fIdx < state.features.length; fIdx++) {
         const feature = state.features[fIdx];
 
@@ -1454,21 +1623,22 @@ async function runMultiFeatureSprint(ctx: DispatchContext): Promise<SprintResult
           });
           feature.status = "failed";
           saveSprintState(projectSlug, sprint, state);
-          anyEscalated = true;
           continue;
         }
         feature.branchName = featureBranchName(sprint, feature.slug);
 
         // Special handling for the Merge PR step: no agent, runs executeMerge.
         if (step.name === "Merge PR") {
-          const mergeOutcome = await runMergeStepForFeature(feature, featureStepState, ctx);
-          if (mergeOutcome === "escalated") {
-            anyEscalated = true;
-          }
+          await runMergeStepForFeature(feature, featureStepState, ctx);
           continue;
         }
 
-        const isFirstStepOfThisInvocation = i === fromStep - 1 && fIdx === 0;
+        // AC #7: inject feedback into the resumed feature's first dispatched
+        // step. When resuming a specific feature, target it by slug (it may not
+        // be index 0); otherwise fall back to the first feature of this step.
+        const isFirstStepOfThisInvocation =
+          i === fromStep - 1 &&
+          (resumedFeatureSlug ? feature.slug === resumedFeatureSlug : fIdx === 0);
         const outcome = await runAgentStepCycle(
           step,
           featureStepState,
@@ -1488,7 +1658,6 @@ async function runMultiFeatureSprint(ctx: DispatchContext): Promise<SprintResult
               { "--allow-empty": null }
             );
           } catch { /* non-critical */ }
-          anyEscalated = true;
           continue;
         }
 
@@ -1505,7 +1674,6 @@ async function runMultiFeatureSprint(ctx: DispatchContext): Promise<SprintResult
               { "--allow-empty": null }
             );
           } catch { /* non-critical */ }
-          anyEscalated = true;
           continue;
         }
 
@@ -1558,15 +1726,21 @@ async function runMultiFeatureSprint(ctx: DispatchContext): Promise<SprintResult
         }
       }
 
-      // After all features dispatched for this step
+      // After all features dispatched for this step, consult the pure reducer.
+      // AC #2 + #10: with terminal-step completion now marking features
+      // "complete" (AC #1), a mixed sprint (>=1 complete, >=1 escalated, none
+      // in-progress) reduces to "escalated" and we PARK here — we do NOT
+      // silently advance to shared steps 10-13. A "failed" feature parks too
+      // (no regression to existing failure-isolation behavior). The sprint
+      // stays "in-progress" only while some feature is still non-terminal.
       const sprintStatus = deriveSprintStatus(state.features);
-      if (sprintStatus === "escalated" || (anyEscalated && sprintStatus !== "in-progress")) {
-        state.status = "escalated";
+      if (sprintStatus === "escalated" || sprintStatus === "failed") {
+        state.status = sprintStatus;
         saveSprintState(projectSlug, sprint, state);
         return {
           status: "escalated",
           progress: renderProgressTable(state),
-          message: `Step ${step.step} (${step.name}): one or more features escalated. Sprint status: ${sprintStatus}.`,
+          message: buildMultiFeatureEscalatedMessage(state, sprint),
           state,
         };
       }
@@ -1737,6 +1911,14 @@ async function runMergeStepForFeature(
   stepState.attempts++;
   stepState.status = "complete";
   stepState.completedAt = new Date().toISOString();
+  // AC #1: the terminal per-feature step (Merge PR, step 9) marks the FEATURE
+  // complete and advances currentStep past the terminal step, alongside the
+  // existing step transition. This is the single missing transition that
+  // previously left mixed sprints reading as "in-progress" (and therefore
+  // unrecoverable). Non-terminal steps only bump currentStep; only the merge
+  // flips feature.status to "complete".
+  feature.status = "complete";
+  feature.currentStep = stepState.step + 1;
   saveSprintState(projectSlug, sprint, state);
 
   const handoff = HANDOFF_MAP[9];

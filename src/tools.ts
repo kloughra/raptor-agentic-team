@@ -723,6 +723,7 @@ export async function resumeSprintTool(
     sprint: number;
     action: "approve" | "request-changes";
     feedback?: string;
+    feature?: string;
   }
 ): Promise<Record<string, unknown>> {
   const project = await ctx.registry.findProject(args.name);
@@ -745,7 +746,8 @@ export async function resumeSprintTool(
     args.name,
     args.sprint,
     args.action,
-    args.feedback
+    args.feedback,
+    args.feature
   );
 
   return {

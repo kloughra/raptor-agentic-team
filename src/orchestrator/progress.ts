@@ -64,6 +64,31 @@ export function renderProgressTable(
   if (state.status === "escalated") {
     lines.push("");
     lines.push("**Sprint escalated** 🚨 — awaiting user intervention");
+
+    // AC #11: name which feature(s) escalated and at which step, and state the
+    // exact resume command. In single-feature mode there are no feature rows;
+    // surface the generic resume command instead.
+    const escalatedFeatures = (state.features ?? []).filter(
+      (f) => f.status === "escalated"
+    );
+    if (escalatedFeatures.length > 0) {
+      for (const f of escalatedFeatures) {
+        const escStep = f.steps.find((s) => s.status === "escalated");
+        const stepDesc = escStep
+          ? `step ${escStep.step} (${escStep.name})`
+          : "an earlier step";
+        lines.push(`- Feature **${f.slug}** escalated at ${stepDesc}`);
+      }
+      const slugHint =
+        escalatedFeatures.length > 1 ? "--feature=<slug>" : "[--feature=<slug>]";
+      lines.push(
+        `Run \`resume_sprint --action=request-changes --feedback="…" ${slugHint}\` to re-engage. Completed sibling features are preserved.`
+      );
+    } else {
+      lines.push(
+        'Run `resume_sprint --action=request-changes --feedback="…"` to re-engage.'
+      );
+    }
   }
 
   if (state.status === "complete") {
