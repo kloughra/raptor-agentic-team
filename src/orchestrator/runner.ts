@@ -50,6 +50,12 @@ import {
   deriveSprintStatus,
   ensureFeatureBranch,
 } from "./multi-runner";
+import {
+  classifyFailure,
+  deriveFailureSignature,
+  TRANSIENT_RETRY_CAP,
+  TRANSIENT_RETRY_DELAY_MS,
+} from "./failure-classification";
 
 export const MAX_RETRY_ATTEMPTS = 3;
 export const ERROR_SUMMARY_MAX_LENGTH = 500;
@@ -161,7 +167,8 @@ function buildTaskDescription(
   sprint: number,
   feedback?: string,
   testScopeSection?: string,
-  requiredReadingSection?: string
+  requiredReadingSection?: string,
+  salvageSection?: string
 ): string {
   let task = `Sprint ${sprint}, Step ${step.step}: ${step.description}.\n`;
   task += `Feature slug: ${featureSlug}\n`;
@@ -178,6 +185,12 @@ function buildTaskDescription(
       task += `Do NOT skip file creation even if the content seems to already exist elsewhere (e.g. in the backlog). `;
       task += `The file is the deliverable.\n`;
     }
+  }
+
+  // CB-4 (AC 14): salvaged-artifact guidance goes in the task description —
+  // which expected outputs already exist (do not recreate) vs. still missing.
+  if (salvageSection) {
+    task += salvageSection;
   }
 
   if (feedback) {
@@ -253,6 +266,232 @@ function hasBlockerMarker(output: string): boolean {
 function truncateErrorSummary(output: string): string {
   if (!output || output.length === 0) return "agent produced no output";
   return output.slice(0, ERROR_SUMMARY_MAX_LENGTH);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ─── Progress-aware circuit breaker (Sprint 12, CB-1/CB-2/CB-4) ───────────────
+
+/**
+ * Result of the salvage check (CB-4): which expectedOutputs patterns are
+ * already satisfied by validated files on disk after a failed attempt.
+ */
+export interface SalvageResult {
+  /** Every expectedOutputs pattern satisfied (and the step HAS expected outputs). */
+  complete: boolean;
+  /** Patterns satisfied, annotated with the matching files: `pattern (file, …)`. */
+  satisfied: string[];
+  /** Patterns not yet satisfied. */
+  missing: string[];
+}
+
+/**
+ * Check whether a failed attempt left validated expected outputs on disk.
+ *
+ * A wrapper over the existing glob gate (`matchExpectedOutput`) — salvage
+ * never bypasses validation, it IS the validation gate (AC 16). Files named
+ * `.gitkeep` never satisfy a pattern for salvage purposes (AC 17) — this
+ * wrapper guards independently of the glob gate's own filtering (architecture
+ * constraint 6: `validateStepOutputs`/`glob-match.ts` are NOT modified here).
+ * Read-only: never mutates the tree.
+ */
+export function checkSalvage(
+  step: WorkflowStep,
+  featureSlug: string,
+  projectPath: string
+): SalvageResult {
+  const satisfied: string[] = [];
+  const missing: string[] = [];
+
+  // A step with no expected outputs can never salvage-complete.
+  if (step.expectedOutputs.length === 0) {
+    return { complete: false, satisfied, missing };
+  }
+
+  for (const pattern of step.expectedOutputs) {
+    const result = matchExpectedOutput(pattern, projectPath, featureSlug);
+    const realFiles = result.matchedFiles.filter(
+      (f) => path.basename(f) !== ".gitkeep"
+    );
+    if (result.satisfied && realFiles.length > 0) {
+      satisfied.push(`${pattern} (${realFiles.join(", ")})`);
+    } else {
+      missing.push(pattern);
+    }
+  }
+
+  return { complete: missing.length === 0, satisfied, missing };
+}
+
+/**
+ * The retry decision returned after every failed agent attempt (CB-1/2/4).
+ * Decision ordering (architecture, Open Question 5 ruling):
+ * salvage-complete > transient > no-progress short-circuit > slot accounting.
+ * (BLOCKER escalation is handled by callers before recording, unchanged.)
+ */
+export type RetryDecision =
+  | { kind: "salvage-complete"; artifacts: string[] }
+  | { kind: "retry"; consumesSlot: boolean; delayMs: number }
+  | {
+      kind: "escalate";
+      reason: "no-progress" | "transient-cap" | "attempts-exhausted";
+      detail: string;
+    };
+
+/**
+ * Pure retry-decision pipeline — the single mechanism BOTH agent retry loops
+ * call, so single- and multi-feature behavior cannot diverge (architecture
+ * constraint 1). `newFailure` must already be pushed onto
+ * `stepState.failures`, classified and signed.
+ */
+export function decideAfterFailure(
+  stepState: StepState,
+  newFailure: FailureRecord,
+  salvage: SalvageResult
+): RetryDecision {
+  // 1. Salvage-complete beats everything (CB-4, AC 15): if the validated
+  //    deliverables are on disk, no classification question remains.
+  if (salvage.complete) {
+    return { kind: "salvage-complete", artifacts: salvage.satisfied };
+  }
+
+  const failures = stepState.failures ?? [];
+  const classification = newFailure.classification ?? "deterministic";
+
+  // 2. Transient (CB-2, AC 6-7): retry without consuming a deterministic
+  //    slot, bounded by the transient cap. Transient failures never
+  //    participate in the CB-1 signature comparison.
+  if (classification === "transient") {
+    const transientCount = failures.filter(
+      (f) => (f.classification ?? "deterministic") === "transient"
+    ).length;
+    if (transientCount >= TRANSIENT_RETRY_CAP) {
+      return {
+        kind: "escalate",
+        reason: "transient-cap",
+        detail: `persistent infrastructure failure: ${
+          newFailure.signature ?? newFailure.errorSummary
+        } × ${TRANSIENT_RETRY_CAP}`,
+      };
+    }
+    return { kind: "retry", consumesSlot: false, delayMs: TRANSIENT_RETRY_DELAY_MS };
+  }
+
+  // 3. No-progress short-circuit (CB-1, AC 1-4): compare against the most
+  //    recent PRIOR deterministic failure, skipping interleaved transient
+  //    records. Signatures are persisted, never re-derived (constraint 4):
+  //    an old record without a signature never matches. A match across the
+  //    scope-narrowing boundary does not short-circuit (the task changed).
+  const newIdx = failures.lastIndexOf(newFailure);
+  const searchFrom = (newIdx === -1 ? failures.length : newIdx) - 1;
+  for (let j = searchFrom; j >= 0; j--) {
+    const prior = failures[j];
+    if ((prior.classification ?? "deterministic") !== "deterministic") continue;
+    if (
+      prior.signature !== undefined &&
+      newFailure.signature !== undefined &&
+      prior.signature === newFailure.signature &&
+      (prior.narrowed ?? false) === (newFailure.narrowed ?? false)
+    ) {
+      return {
+        kind: "escalate",
+        reason: "no-progress",
+        detail: `retries short-circuited: identical failure signature "${newFailure.signature}" on consecutive attempts`,
+      };
+    }
+    break; // only the MOST RECENT prior deterministic failure participates
+  }
+
+  // 4. Deterministic slot accounting — today's exact behavior (AC 8).
+  //    `attempts` keeps its frozen meaning: deterministic attempts consumed,
+  //    including this failure (constraint 3).
+  if ((stepState.attempts ?? 0) >= MAX_RETRY_ATTEMPTS) {
+    return {
+      kind: "escalate",
+      reason: "attempts-exhausted",
+      detail: `step failed after ${MAX_RETRY_ATTEMPTS} attempts`,
+    };
+  }
+  return { kind: "retry", consumesSlot: true, delayMs: 0 };
+}
+
+/**
+ * Render the CB-4 salvage section for the next attempt's TASK DESCRIPTION
+ * (AC 14): already-existing validated files (do not recreate) vs. patterns
+ * still missing (this attempt's actual job). Empty when nothing was salvaged.
+ */
+export function buildSalvageSection(salvage: SalvageResult): string {
+  if (salvage.satisfied.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("");
+  lines.push("--- SALVAGED WORK FROM PREVIOUS ATTEMPT ---");
+  lines.push(
+    "The following expected outputs already exist on disk and passed validation. " +
+      "Do NOT recreate them from scratch — verify them and build on them:"
+  );
+  for (const entry of salvage.satisfied) {
+    lines.push(`- ${entry}`);
+  }
+  if (salvage.missing.length > 0) {
+    lines.push("");
+    lines.push(
+      "The following expected-output patterns are still missing — creating them is this attempt's actual job:"
+    );
+    for (const pattern of salvage.missing) {
+      lines.push(`- ${pattern}`);
+    }
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+/**
+ * Shared per-failure processing for both agent retry loops: record the
+ * failure (classified + signed at record time, AC 5 / constraint 4), run the
+ * salvage check (CB-4), and return the pure pipeline's decision. Rolls back
+ * the provisional attempt increment when the failure is transient (AC 6 —
+ * transient failures never consume a deterministic slot) and stamps
+ * `escalationReason` on escalation (AC 4/7 — no silent branches).
+ */
+function processFailureAndDecide(
+  step: WorkflowStep,
+  stepState: StepState,
+  featureSlug: string,
+  projectPath: string,
+  rawSummary: string,
+  attempt: number,
+  extras?: { killKind?: "idle" | "ceiling" | "buffer-overflow"; narrowed?: boolean }
+): RetryDecision {
+  const salvage = checkSalvage(step, featureSlug, projectPath);
+  const errorSummary = truncateErrorSummary(rawSummary);
+
+  const record: FailureRecord = {
+    attempt,
+    errorSummary,
+    timestamp: new Date().toISOString(),
+    hadPartialArtifacts: validateStepOutputs(step, projectPath).length > 0,
+    classification: classifyFailure(errorSummary),
+    signature: deriveFailureSignature(errorSummary),
+  };
+  if (extras?.killKind) record.killKind = extras.killKind;
+  if (extras?.narrowed) record.narrowed = true;
+  if (salvage.satisfied.length > 0) record.salvagedPatterns = salvage.satisfied;
+  stepState.failures.push(record);
+
+  const decision = decideAfterFailure(stepState, record, salvage);
+
+  if (decision.kind === "retry" && !decision.consumesSlot) {
+    // Transient: roll back the provisional increment — `attempts` keeps its
+    // frozen meaning of deterministic attempts consumed (constraint 3).
+    stepState.attempts = Math.max(0, stepState.attempts - 1);
+  }
+  if (decision.kind === "escalate") {
+    stepState.escalationReason = decision.reason;
+  }
+  return decision;
 }
 
 /**
@@ -386,7 +625,8 @@ export async function runSprintFromStep(
   projectSlug: string,
   sprint: number,
   fromStep: number,
-  feedback?: string
+  feedback?: string,
+  timeoutConfig?: TimeoutConfig
 ): Promise<SprintResult> {
   // Load or create state
   let state = loadSprintState(projectSlug, sprint);
@@ -506,6 +746,7 @@ export async function runSprintFromStep(
       dinoNames,
       testFramework,
       sprintSummaries,
+      timeoutConfig,
     });
   }
 
@@ -750,10 +991,22 @@ export async function runSprintFromStep(
       continue;
     }
 
-    // --- Standard agent step with circuit breaker retry ---
+    // --- Standard agent step with progress-aware circuit breaker (CB-1/2/4) ---
     let succeeded = false;
+    let completedViaSalvage = false;
+    let escalationDetail: string | null = null;
 
-    for (let attempt = stepState.attempts + 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+    while (true) {
+      // Safety guard: deterministic slots already exhausted (e.g. re-entered
+      // without a reset) — escalate rather than spawning another attempt.
+      if (stepState.attempts >= MAX_RETRY_ATTEMPTS) {
+        stepState.escalationReason = stepState.escalationReason ?? "attempts-exhausted";
+        break;
+      }
+
+      // Provisional deterministic attempt number: rolled back by
+      // processFailureAndDecide when the failure classifies transient (AC 6).
+      const attempt = stepState.attempts + 1;
       stepState.attempts = attempt;
       saveSprintState(projectSlug, sprint, state);
 
@@ -782,14 +1035,26 @@ export async function runSprintFromStep(
       // Resolve and inject required artifacts (read-before-write enforcement)
       const artifactResult = resolveArtifacts(step.name, featureSlug, projectPath);
       if (artifactResult.missing.length > 0) {
-        // Required artifact missing — record failure and retry
-        stepState.failures.push({
-          attempt,
-          errorSummary: `Missing required artifacts: ${artifactResult.missing.join(", ")}`,
-          timestamp: new Date().toISOString(),
-          hadPartialArtifacts: false,
-        });
+        // Required artifact missing — record failure, run the pipeline
+        const decision = processFailureAndDecide(
+          step,
+          stepState,
+          featureSlug,
+          projectPath,
+          `Missing required artifacts: ${artifactResult.missing.join(", ")}`,
+          attempt
+        );
         saveSprintState(projectSlug, sprint, state);
+        if (decision.kind === "salvage-complete") {
+          succeeded = true;
+          completedViaSalvage = true;
+          break;
+        }
+        if (decision.kind === "escalate") {
+          escalationDetail = decision.detail;
+          break;
+        }
+        if (decision.delayMs > 0) await sleep(decision.delayMs);
         continue;
       }
       const requiredReadingSection = artifactResult.section || undefined;
@@ -802,6 +1067,13 @@ export async function runSprintFromStep(
         isMultiFeature
       );
 
+      // CB-4 (AC 14): on retries, tell the agent which expected outputs
+      // already exist and passed the gate — do not recreate them.
+      const isRetry = (stepState.failures ?? []).length > 0;
+      const salvageSection = isRetry
+        ? buildSalvageSection(checkSalvage(step, featureSlug, projectPath)) || undefined
+        : undefined;
+
       // Add user feedback on first attempt if provided
       const taskDesc = buildTaskDescription(
         step,
@@ -809,11 +1081,12 @@ export async function runSprintFromStep(
         sprint,
         attempt === 1 && i === fromStep - 1 ? feedback : undefined,
         testScopeSection || undefined,
-        requiredReadingSection
+        requiredReadingSection,
+        salvageSection
       );
 
-      // Add retry context for attempts > 1
-      if (attempt > 1) {
+      // Add retry context when previous failures exist
+      if (isRetry) {
         const partialArtifacts = validateStepOutputs(step, projectPath);
         context += buildRetryContext(
           attempt,
@@ -824,11 +1097,11 @@ export async function runSprintFromStep(
         );
       }
 
-      // On final attempt, try scope narrowing before normal retry
+      // On final deterministic attempt, try scope narrowing before normal retry
       if (attempt === MAX_RETRY_ATTEMPTS && isNarrowable(step.role)) {
         const subTasks = decomposeTask(step.role, step, featureSlug, projectPath, taskDesc);
         if (subTasks.length > 1) {
-          const stepTimeout = resolveStepTimeout(step.name);
+          const stepTimeout = resolveStepTimeout(step.name, timeoutConfig);
           const narrowResult = await executeNarrowedRetry(
             subTasks, step.role, systemPrompt, context, projectPath, stepTimeout
           );
@@ -839,20 +1112,35 @@ export async function runSprintFromStep(
             break;
           }
 
-          // Partial or full failure — record and fall through to escalation
-          stepState.failures.push({
+          // Partial or full failure — record (flagged narrowed for the CB-1
+          // boundary rule) and run the pipeline
+          const decision = processFailureAndDecide(
+            step,
+            stepState,
+            featureSlug,
+            projectPath,
+            `Narrowed retry (${narrowResult.strategy}): ${narrowResult.completedIds.length}/${subTasks.length} sub-tasks completed. Failed: ${narrowResult.failedIds.join(", ")}`,
             attempt,
-            errorSummary: `Narrowed retry (${narrowResult.strategy}): ${narrowResult.completedIds.length}/${subTasks.length} sub-tasks completed. Failed: ${narrowResult.failedIds.join(", ")}`,
-            timestamp: new Date().toISOString(),
-            hadPartialArtifacts: narrowResult.completedIds.length > 0,
-          });
+            { narrowed: true }
+          );
           saveSprintState(projectSlug, sprint, state);
+          if (decision.kind === "salvage-complete") {
+            succeeded = true;
+            completedViaSalvage = true;
+            break;
+          }
+          if (decision.kind === "escalate") {
+            escalationDetail = decision.detail;
+            break;
+          }
+          if (decision.delayMs > 0) await sleep(decision.delayMs);
           continue;
         }
       }
 
-      // Spawn subagent with step-aware timeout
-      const stepTimeout = resolveStepTimeout(step.name);
+      // Spawn subagent with step-aware timeout (CB-5: user config now reaches
+      // the mechanism; the resolved value is the idle window — CB-3)
+      const stepTimeout = resolveStepTimeout(step.name, timeoutConfig);
       const result = await spawnAgent(
         step.role,
         systemPrompt,
@@ -862,13 +1150,17 @@ export async function runSprintFromStep(
         stepTimeout
       );
 
-      // Check for [BLOCKER] — immediate escalation
+      // Check for [BLOCKER] — immediate escalation (highest priority,
+      // ahead of the salvage/transient/short-circuit pipeline)
       if (hasBlockerMarker(result.output)) {
+        const blockerSummary = truncateErrorSummary(result.output);
         stepState.failures.push({
           attempt,
-          errorSummary: truncateErrorSummary(result.output),
+          errorSummary: blockerSummary,
           timestamp: new Date().toISOString(),
           hadPartialArtifacts: validateStepOutputs(step, projectPath).length > 0,
+          classification: classifyFailure(blockerSummary),
+          signature: deriveFailureSignature(blockerSummary),
         });
         stepState.status = "escalated";
         state.status = "escalated";
@@ -896,14 +1188,23 @@ export async function runSprintFromStep(
         // Layer 3: Validate required outputs actually exist on disk
         const missingOutputs = validateRequiredOutputs(step, featureSlug, projectPath);
         if (missingOutputs.length > 0) {
-          // Agent said it's done but didn't create required files — treat as failure
-          stepState.failures.push({
-            attempt,
-            errorSummary: `Agent completed (exit 0) but did not create required output files: ${missingOutputs.join(", ")}. The step is not complete until these files exist on disk.`,
-            timestamp: new Date().toISOString(),
-            hadPartialArtifacts: validateStepOutputs(step, projectPath).length > 0,
-          });
+          // Agent said it's done but didn't create required files — failure
+          const decision = processFailureAndDecide(
+            step,
+            stepState,
+            featureSlug,
+            projectPath,
+            `Agent completed (exit 0) but did not create required output files: ${missingOutputs.join(", ")}. The step is not complete until these files exist on disk.`,
+            attempt
+          );
           saveSprintState(projectSlug, sprint, state);
+          if (decision.kind === "escalate") {
+            escalationDetail = decision.detail;
+            break;
+          }
+          if (decision.kind === "retry" && decision.delayMs > 0) {
+            await sleep(decision.delayMs);
+          }
           continue; // Retry — the agent will see this failure in retry context
         }
 
@@ -911,18 +1212,35 @@ export async function runSprintFromStep(
         break;
       }
 
-      // Record failure
-      stepState.failures.push({
+      // Record failure and run the CB-1/2/4 pipeline
+      const decision = processFailureAndDecide(
+        step,
+        stepState,
+        featureSlug,
+        projectPath,
+        result.output,
         attempt,
-        errorSummary: truncateErrorSummary(result.output),
-        timestamp: new Date().toISOString(),
-        hadPartialArtifacts: validateStepOutputs(step, projectPath).length > 0,
-      });
+        { killKind: result.killKind }
+      );
       saveSprintState(projectSlug, sprint, state);
+      if (decision.kind === "salvage-complete") {
+        // Sprint 11 case: agent finished its work, then died. Validated
+        // deliverables are on disk — complete WITHOUT another attempt (AC 15).
+        succeeded = true;
+        completedViaSalvage = true;
+        break;
+      }
+      if (decision.kind === "escalate") {
+        escalationDetail = decision.detail;
+        break;
+      }
+      if (decision.delayMs > 0) await sleep(decision.delayMs);
     }
 
     if (!succeeded) {
-      // All retries exhausted — escalate
+      // Escalate — reason recorded by the pipeline (AC 4/7/22)
+      const reason = stepState.escalationReason ?? "attempts-exhausted";
+      stepState.escalationReason = reason;
       stepState.status = "escalated";
       state.status = "escalated";
       saveSprintState(projectSlug, sprint, state);
@@ -933,17 +1251,22 @@ export async function runSprintFromStep(
           (f) => `Attempt ${f.attempt}: ${f.errorSummary}`
         ).join("; ");
         await git.commit(
-          `[ESCALATE] ${formatHandoffRole(step.role, dinoNames)}: step ${step.step} (${step.name}) failed ${stepState.attempts} times — requesting user intervention.\nSummary: ${summary}`,
+          `[ESCALATE] ${formatHandoffRole(step.role, dinoNames)}: step ${step.step} (${step.name}) failed ${stepState.failures.length} times — requesting user intervention.\nSummary: ${summary}`,
           { "--allow-empty": null }
         );
       } catch {
         // Non-critical
       }
 
+      const message =
+        reason === "attempts-exhausted"
+          ? `Step ${step.step} (${step.name}) failed after ${MAX_RETRY_ATTEMPTS} attempts.\n\nLast error:\n${stepState.failures[stepState.failures.length - 1]?.errorSummary || "unknown"}`
+          : `Step ${step.step} (${step.name}) escalated (${reason === "no-progress" ? "no progress" : "transient cap"}): ${escalationDetail ?? stepState.failures[stepState.failures.length - 1]?.errorSummary ?? "unknown"}`;
+
       return {
         status: "escalated",
         progress: renderProgressTable(state),
-        message: `Step ${step.step} (${step.name}) failed after ${MAX_RETRY_ATTEMPTS} attempts.\n\nLast error:\n${stepState.failures[stepState.failures.length - 1]?.errorSummary || "unknown"}`,
+        message,
         state,
       };
     }
@@ -955,6 +1278,11 @@ export async function runSprintFromStep(
     }
 
     stepState.status = "complete";
+    if (completedViaSalvage) {
+      // AC 15/22: auditable marker — the step completed via salvage, not a
+      // fresh agent attempt.
+      stepState.completedVia = "salvage";
+    }
     stepState.completedAt = new Date().toISOString();
 
     // --- Update DoD fields based on completed step ---
@@ -1050,7 +1378,10 @@ export async function resumeSprint(
   sprint: number,
   action: "approve" | "request-changes",
   feedback?: string,
-  feature?: string
+  feature?: string,
+  // Default value (not just `?`) so Function.length stays <= 6 — the Sprint 10
+  // signature-additivity contract pins arity, and trailing params stay optional.
+  timeoutConfig: TimeoutConfig | undefined = undefined
 ): Promise<SprintResult> {
   const state = loadSprintState(projectSlug, sprint);
   if (!state) {
@@ -1109,7 +1440,9 @@ export async function resumeSprint(
           projectPath,
           projectSlug,
           sprint,
-          state.currentStep
+          state.currentStep,
+          undefined,
+          timeoutConfig
         );
       }
 
@@ -1125,7 +1458,9 @@ export async function resumeSprint(
         projectPath,
         projectSlug,
         sprint,
-        state.currentStep + 1
+        state.currentStep + 1,
+        undefined,
+        timeoutConfig
       );
     } else {
       pendingCheckpoint.status = "changes-requested";
@@ -1156,7 +1491,8 @@ export async function resumeSprint(
           projectSlug,
           sprint,
           state.currentStep,
-          feedback
+          feedback,
+          timeoutConfig
         );
       }
 
@@ -1181,7 +1517,8 @@ export async function resumeSprint(
         projectSlug,
         sprint,
         state.currentStep,
-        feedback
+        feedback,
+        timeoutConfig
       );
     }
   }
@@ -1269,7 +1606,8 @@ export async function resumeSprint(
         projectSlug,
         sprint,
         targetStep.step,
-        feedback
+        feedback,
+        timeoutConfig
       );
     }
 
@@ -1296,7 +1634,8 @@ export async function resumeSprint(
       projectSlug,
       sprint,
       escalatedStep.step,
-      feedback
+      feedback,
+      timeoutConfig
     );
   }
 
@@ -1327,7 +1666,8 @@ export async function resumeSprint(
       projectSlug,
       sprint,
       failedStep.step,
-      feedback
+      feedback,
+      timeoutConfig
     );
   }
 
@@ -1352,10 +1692,12 @@ interface DispatchContext {
   dinoNames: Record<Role, DinoIdentity>;
   testFramework: ReturnType<typeof detectTestFramework>;
   sprintSummaries: string | null;
+  /** CB-5: user timeout config threaded to every resolveStepTimeout call. */
+  timeoutConfig?: TimeoutConfig;
 }
 
 type AgentStepOutcome =
-  | { kind: "complete"; artifacts: string[] }
+  | { kind: "complete"; artifacts: string[]; via?: "agent" | "salvage" }
   | { kind: "blocker"; output: string }
   | { kind: "escalated"; lastError: string };
 
@@ -1368,7 +1710,7 @@ type AgentStepOutcome =
  * (attempts/failures); the caller persists state and decides what to do
  * with the outcome.
  */
-async function runAgentStepCycle(
+export async function runAgentStepCycle(
   step: WorkflowStep,
   stepState: StepState,
   featureSlug: string,
@@ -1376,9 +1718,24 @@ async function runAgentStepCycle(
   isMultiFeature: boolean,
   isFirstStepOfThisInvocation: boolean
 ): Promise<AgentStepOutcome> {
-  const { projectPath, projectSlug, sprint, state, feedback, sprintSummaries, testFramework } = ctx;
+  const { projectPath, projectSlug, sprint, state, feedback, sprintSummaries, testFramework, timeoutConfig } = ctx;
 
-  for (let attempt = stepState.attempts + 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+  // Progress-aware circuit breaker (CB-1/2/4): the loop is driven by the
+  // RetryDecision pipeline via processFailureAndDecide — the SAME mechanism the
+  // single-feature loop uses, so behavior cannot diverge (architecture
+  // constraint 1). `stepState.attempts` keeps its frozen meaning: deterministic
+  // attempts consumed. Transient failures never consume a slot (AC 6).
+  while (true) {
+    // Safety guard: deterministic slots already exhausted (e.g. re-entered
+    // without a reset) — escalate rather than spawning another attempt.
+    if (stepState.attempts >= MAX_RETRY_ATTEMPTS) {
+      stepState.escalationReason = stepState.escalationReason ?? "attempts-exhausted";
+      break;
+    }
+
+    // Provisional deterministic attempt number: rolled back by
+    // processFailureAndDecide when the failure classifies transient (AC 6).
+    const attempt = stepState.attempts + 1;
     stepState.attempts = attempt;
     saveSprintState(projectSlug, sprint, state);
 
@@ -1401,13 +1758,25 @@ async function runAgentStepCycle(
 
     const artifactResult = resolveArtifacts(step.name, featureSlug, projectPath);
     if (artifactResult.missing.length > 0) {
-      stepState.failures.push({
-        attempt,
-        errorSummary: `Missing required artifacts: ${artifactResult.missing.join(", ")}`,
-        timestamp: new Date().toISOString(),
-        hadPartialArtifacts: false,
-      });
+      // Required artifact missing — record failure, run the CB-1/2/4 pipeline
+      const decision = processFailureAndDecide(
+        step,
+        stepState,
+        featureSlug,
+        projectPath,
+        `Missing required artifacts: ${artifactResult.missing.join(", ")}`,
+        attempt
+      );
       saveSprintState(projectSlug, sprint, state);
+      if (decision.kind === "salvage-complete") {
+        return {
+          kind: "complete",
+          artifacts: validateStepOutputs(step, projectPath),
+          via: "salvage",
+        };
+      }
+      if (decision.kind === "escalate") break;
+      if (decision.delayMs > 0) await sleep(decision.delayMs);
       continue;
     }
     const requiredReadingSection = artifactResult.section || undefined;
@@ -1419,16 +1788,26 @@ async function runAgentStepCycle(
       isMultiFeature
     );
 
+    // CB-4 (AC 14): on retries, tell the agent which expected outputs already
+    // exist and passed the gate — do not recreate them. `failures.length`
+    // (not `attempt > 1`) is the retry signal: transient rollbacks can bring
+    // `attempt` back to 1 while failure history exists.
+    const isRetry = (stepState.failures ?? []).length > 0;
+    const salvageSection = isRetry
+      ? buildSalvageSection(checkSalvage(step, featureSlug, projectPath)) || undefined
+      : undefined;
+
     const taskDesc = buildTaskDescription(
       step,
       featureSlug,
       sprint,
       attempt === 1 && isFirstStepOfThisInvocation ? feedback : undefined,
       testScopeSection || undefined,
-      requiredReadingSection
+      requiredReadingSection,
+      salvageSection
     );
 
-    if (attempt > 1) {
+    if (isRetry) {
       const partialArtifacts = validateStepOutputs(step, projectPath);
       context += buildRetryContext(
         attempt,
@@ -1439,10 +1818,11 @@ async function runAgentStepCycle(
       );
     }
 
+    // On final deterministic attempt, try scope narrowing before normal retry
     if (attempt === MAX_RETRY_ATTEMPTS && isNarrowable(step.role)) {
       const subTasks = decomposeTask(step.role, step, featureSlug, projectPath, taskDesc);
       if (subTasks.length > 1) {
-        const stepTimeout = resolveStepTimeout(step.name);
+        const stepTimeout = resolveStepTimeout(step.name, timeoutConfig);
         const narrowResult = await executeNarrowedRetry(
           subTasks, step.role, systemPrompt, context, projectPath, stepTimeout
         );
@@ -1453,18 +1833,34 @@ async function runAgentStepCycle(
           return { kind: "complete", artifacts };
         }
 
-        stepState.failures.push({
+        // Partial or full failure — record (flagged narrowed for the CB-1
+        // boundary rule) and run the pipeline
+        const decision = processFailureAndDecide(
+          step,
+          stepState,
+          featureSlug,
+          projectPath,
+          `Narrowed retry (${narrowResult.strategy}): ${narrowResult.completedIds.length}/${subTasks.length} sub-tasks completed. Failed: ${narrowResult.failedIds.join(", ")}`,
           attempt,
-          errorSummary: `Narrowed retry (${narrowResult.strategy}): ${narrowResult.completedIds.length}/${subTasks.length} sub-tasks completed. Failed: ${narrowResult.failedIds.join(", ")}`,
-          timestamp: new Date().toISOString(),
-          hadPartialArtifacts: narrowResult.completedIds.length > 0,
-        });
+          { narrowed: true }
+        );
         saveSprintState(projectSlug, sprint, state);
+        if (decision.kind === "salvage-complete") {
+          return {
+            kind: "complete",
+            artifacts: validateStepOutputs(step, projectPath),
+            via: "salvage",
+          };
+        }
+        if (decision.kind === "escalate") break;
+        if (decision.delayMs > 0) await sleep(decision.delayMs);
         continue;
       }
     }
 
-    const stepTimeout = resolveStepTimeout(step.name);
+    // Spawn subagent with step-aware timeout (CB-5: user config now reaches
+    // the mechanism; the resolved value is the idle window — CB-3)
+    const stepTimeout = resolveStepTimeout(step.name, timeoutConfig);
     const result = await spawnAgent(
       step.role,
       systemPrompt,
@@ -1474,12 +1870,19 @@ async function runAgentStepCycle(
       stepTimeout
     );
 
+    // [BLOCKER] — immediate escalation, handled ahead of the salvage/transient/
+    // short-circuit pipeline (architecture: RetryDecision ordering note).
+    // Recorded classified + signed like every other failure, mirroring the
+    // single-feature loop.
     if (hasBlockerMarker(result.output)) {
+      const blockerSummary = truncateErrorSummary(result.output);
       stepState.failures.push({
         attempt,
-        errorSummary: truncateErrorSummary(result.output),
+        errorSummary: blockerSummary,
         timestamp: new Date().toISOString(),
         hadPartialArtifacts: validateStepOutputs(step, projectPath).length > 0,
+        classification: classifyFailure(blockerSummary),
+        signature: deriveFailureSignature(blockerSummary),
       });
       return { kind: "blocker", output: result.output };
     }
@@ -1487,14 +1890,21 @@ async function runAgentStepCycle(
     if (result.exitCode === 0) {
       const missingOutputs = validateRequiredOutputs(step, featureSlug, projectPath);
       if (missingOutputs.length > 0) {
-        stepState.failures.push({
-          attempt,
-          errorSummary: `Agent completed (exit 0) but did not create required output files: ${missingOutputs.join(", ")}. The step is not complete until these files exist on disk.`,
-          timestamp: new Date().toISOString(),
-          hadPartialArtifacts: validateStepOutputs(step, projectPath).length > 0,
-        });
+        // Agent said it's done but didn't create required files — failure
+        const decision = processFailureAndDecide(
+          step,
+          stepState,
+          featureSlug,
+          projectPath,
+          `Agent completed (exit 0) but did not create required output files: ${missingOutputs.join(", ")}. The step is not complete until these files exist on disk.`,
+          attempt
+        );
         saveSprintState(projectSlug, sprint, state);
-        continue;
+        if (decision.kind === "escalate") break;
+        if (decision.kind === "retry" && decision.delayMs > 0) {
+          await sleep(decision.delayMs);
+        }
+        continue; // Retry — the agent will see this failure in retry context
       }
 
       const artifacts =
@@ -1502,15 +1912,34 @@ async function runAgentStepCycle(
       return { kind: "complete", artifacts };
     }
 
-    stepState.failures.push({
+    // Record failure and run the CB-1/2/4 pipeline
+    const decision = processFailureAndDecide(
+      step,
+      stepState,
+      featureSlug,
+      projectPath,
+      result.output,
       attempt,
-      errorSummary: truncateErrorSummary(result.output),
-      timestamp: new Date().toISOString(),
-      hadPartialArtifacts: validateStepOutputs(step, projectPath).length > 0,
-    });
+      { killKind: result.killKind }
+    );
     saveSprintState(projectSlug, sprint, state);
+    if (decision.kind === "salvage-complete") {
+      // Sprint 11 case: agent finished its work, then died. Validated
+      // deliverables are on disk — complete WITHOUT another attempt (AC 15).
+      return {
+        kind: "complete",
+        artifacts: validateStepOutputs(step, projectPath),
+        via: "salvage",
+      };
+    }
+    if (decision.kind === "escalate") break;
+    if (decision.delayMs > 0) await sleep(decision.delayMs);
   }
 
+  // Escalated — reason recorded on stepState.escalationReason by the pipeline
+  // (AC 4/7/22, no silent branches); caller persists status and commits the
+  // [ESCALATE] marker.
+  stepState.escalationReason = stepState.escalationReason ?? "attempts-exhausted";
   return {
     kind: "escalated",
     lastError: stepState.failures[stepState.failures.length - 1]?.errorSummary || "unknown",

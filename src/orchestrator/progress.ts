@@ -1,4 +1,4 @@
-import { SprintState, FeatureState } from "./state";
+import { SprintState, FeatureState, StepState } from "./state";
 import { MAX_RETRY_ATTEMPTS } from "./runner";
 import { Role } from "./workflow";
 import { DinoIdentity, resolveDinoNames, formatRoleDisplay } from "./dino";
@@ -10,6 +10,33 @@ const STATUS_ICONS: Record<string, string> = {
   failed: "❌",
   escalated: "🚨",
 };
+
+/**
+ * Status display for one step row, shared by the top-level and per-feature
+ * loops (AC 22 — every circuit-breaker decision path is visible in reporting):
+ * - complete via salvage        → "✅ complete (salvaged)"
+ * - escalated, no-progress      → "🚨 escalated (no progress)"
+ * - escalated, transient-cap    → "🚨 escalated (transient cap)"
+ * - escalated, legacy/exhausted → today's "🚨 escalated (N/3)" display
+ */
+function stepStatusDisplay(step: StepState): string {
+  if (step.status === "complete" && step.completedVia === "salvage") {
+    return "✅ complete (salvaged)";
+  }
+  if (step.status === "escalated") {
+    if (step.escalationReason === "no-progress") {
+      return "🚨 escalated (no progress)";
+    }
+    if (step.escalationReason === "transient-cap") {
+      return "🚨 escalated (transient cap)";
+    }
+    return `🚨 escalated (${step.attempts}/${MAX_RETRY_ATTEMPTS})`;
+  }
+  if (step.status === "in-progress" && step.attempts > 1) {
+    return `⚠ attempt ${step.attempts}/${MAX_RETRY_ATTEMPTS}`;
+  }
+  return STATUS_ICONS[step.status] || "⬜";
+}
 
 export function renderProgressTable(
   state: SprintState,
@@ -29,15 +56,7 @@ export function renderProgressTable(
   const isMultiFeatureMode = !!(state.features && state.features.length > 1);
 
   for (const step of state.steps) {
-    let statusDisplay: string;
-
-    if (step.status === "escalated") {
-      statusDisplay = `🚨 escalated (${step.attempts}/${MAX_RETRY_ATTEMPTS})`;
-    } else if (step.status === "in-progress" && step.attempts > 1) {
-      statusDisplay = `⚠ attempt ${step.attempts}/${MAX_RETRY_ATTEMPTS}`;
-    } else {
-      statusDisplay = STATUS_ICONS[step.status] || "⬜";
-    }
+    let statusDisplay = stepStatusDisplay(step);
 
     if (isMultiFeatureMode && step.step <= 9) {
       statusDisplay = `${statusDisplay} (per-feature)`;
@@ -123,14 +142,7 @@ export function renderProgressTable(
       lines.push("| Step | Role | Task | Status |");
       lines.push("|------|------|------|--------|");
       for (const step of feature.steps) {
-        let statusDisplay: string;
-        if (step.status === "escalated") {
-          statusDisplay = `🚨 escalated (${step.attempts}/${MAX_RETRY_ATTEMPTS})`;
-        } else if (step.status === "in-progress" && step.attempts > 1) {
-          statusDisplay = `⚠ attempt ${step.attempts}/${MAX_RETRY_ATTEMPTS}`;
-        } else {
-          statusDisplay = STATUS_ICONS[step.status] || "⬜";
-        }
+        const statusDisplay = stepStatusDisplay(step);
         const roleDisplay = formatRoleDisplay(step.role as Role, names);
         lines.push(`| ${step.step} | ${roleDisplay} | ${step.name} | ${statusDisplay} |`);
       }

@@ -51,7 +51,45 @@ export function loadConfig(configPath: string): RaptorConfig {
       : defaults.projectsBaseDir,
     teamTemplatePath: parsed.teamTemplatePath ?? null,
     dinoNames: parsed.dinoNames ?? undefined,
+    timeouts: parseTimeouts(parsed.timeouts),
   };
+}
+
+/**
+ * Parse the `timeouts` key from config.json (CB-5, AC 19).
+ *
+ * Type guards drop non-number values field-wise; a malformed `timeouts` value
+ * (not an object) is ignored entirely. Absent key → field absent →
+ * byte-identical behavior to before this feature.
+ */
+function parseTimeouts(
+  raw: unknown
+): { default?: number; stepOverrides?: Record<string, number> } | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+
+  const source = raw as Record<string, unknown>;
+  const result: { default?: number; stepOverrides?: Record<string, number> } = {};
+
+  if (typeof source.default === "number" && Number.isFinite(source.default)) {
+    result.default = source.default;
+  }
+
+  if (
+    typeof source.stepOverrides === "object" &&
+    source.stepOverrides !== null &&
+    !Array.isArray(source.stepOverrides)
+  ) {
+    const overrides: Record<string, number> = {};
+    for (const [step, value] of Object.entries(source.stepOverrides)) {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        overrides[step] = value;
+      }
+    }
+    result.stepOverrides = overrides;
+  }
+
+  return result;
 }
 
 function resolveHome(filepath: string): string {

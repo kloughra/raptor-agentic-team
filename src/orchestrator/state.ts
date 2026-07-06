@@ -8,6 +8,23 @@ export interface FailureRecord {
   errorSummary: string;
   timestamp: string;
   hadPartialArtifacts: boolean;
+  /**
+   * CB-2 (Sprint 12): recorded at write time. Absent (older sprints) reads
+   * as "deterministic" via the `??` convention (AC 9) — no loadSprintState
+   * defaulting (architecture constraint 5).
+   */
+  classification?: "transient" | "deterministic";
+  /**
+   * CB-1 (Sprint 12): deterministic signature persisted at record time.
+   * An old record without a signature never matches anything (constraint 4).
+   */
+  signature?: string;
+  /** CB-3 (Sprint 12): which kill path produced this failure, if any. */
+  killKind?: "idle" | "ceiling" | "buffer-overflow";
+  /** True if recorded by a scope-narrowed attempt (CB-1 boundary rule). */
+  narrowed?: boolean;
+  /** CB-4 (Sprint 12): expectedOutputs patterns already satisfied when recorded. */
+  salvagedPatterns?: string[];
 }
 
 export interface StepState {
@@ -17,8 +34,13 @@ export interface StepState {
   status: StepStatus;
   artifacts: string[];
   completedAt: string | null;
+  /** Deterministic attempts consumed — meaning FROZEN (architecture constraint 3). */
   attempts: number;
   failures: FailureRecord[];
+  /** CB-4 (Sprint 12): absent ⇒ "agent" (AC 15). */
+  completedVia?: "agent" | "salvage";
+  /** CB-1/CB-2 (Sprint 12): why the step escalated (AC 4, AC 7). */
+  escalationReason?: "attempts-exhausted" | "no-progress" | "transient-cap";
 }
 
 export interface CheckpointState {

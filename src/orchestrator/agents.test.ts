@@ -8,6 +8,7 @@ jest.mock("child_process", () => ({
 }));
 
 import { spawnAgent } from "./agents";
+import { HARD_CEILING_MS } from "./timeouts";
 
 interface FakeChild extends EventEmitter {
   stdout: Readable;
@@ -153,5 +154,116 @@ describe("spawnAgent", () => {
     const result = await promise;
 
     expect(result).toEqual({ output: "boom", exitCode: 2 });
+  });
+});
+
+/**
+ * CB-3: idle-timeout instead of wall-clock kill (Sprint 12,
+ * progress-aware-circuit-breaker, AC 10-12).
+ *
+ * Per the architecture test-surface map these mechanics are pinned here with
+ * fake timers and a fake child process. stdout is the SOLE liveness signal
+ * (constraint 9); the hard ceiling is the only defense against a never-idle
+ * agent. Data events are emitted synchronously on the fake streams so fake
+ * timers and stream delivery cannot deadlock.
+ */
+describe("spawnAgent — idle timeout & hard ceiling (CB-3)", () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("resets the idle deadline on every stdout chunk — a streaming agent outlives the idle window (AC 10)", async () => {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const promise = spawnAgent("qa", "sys", "ctx", "task", "/tmp/project", 1000);
+
+    // Stream a chunk every 600ms; total runtime 3000ms >> the 1000ms idle window.
+    for (let i = 0; i < 5; i++) {
+      jest.advanceTimersByTime(600);
+      child.stdout.emit("data", Buffer.from("tick "));
+    }
+    expect(child.kill).not.toHaveBeenCalled();
+
+    child.emit("close", 0);
+    const result = await promise;
+    expect(result.exitCode).toBe(0);
+    expect(result.killKind).toBeUndefined();
+  });
+
+  it("idle-kills a silent agent after the idle window, distinguishable from the legacy wall-clock message (AC 11)", async () => {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const promise = spawnAgent("qa", "sys", "ctx", "task", "/tmp/project", 1000);
+    jest.advanceTimersByTime(1000);
+    const result = await promise;
+
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(result.exitCode).toBe(1);
+    expect(result.killKind).toBe("idle");
+    expect(result.output).toBe("agent idle-killed after 1000ms with no stdout output");
+    expect(result.output).not.toMatch(/agent timed out after/);
+  });
+
+  it("stderr output does NOT reset the idle timer (architecture constraint 9)", async () => {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const promise = spawnAgent("qa", "sys", "ctx", "task", "/tmp/project", 1000);
+    jest.advanceTimersByTime(600);
+    child.stderr.emit("data", Buffer.from("warning spew"));
+    jest.advanceTimersByTime(400); // 1000ms with zero stdout output
+    const result = await promise;
+
+    expect(result.killKind).toBe("idle");
+    // Buffered stderr is still preferred as output; the kill message is
+    // appended as a suffix line so signature classes always match.
+    expect(result.output).toContain("warning spew");
+    expect(result.output).toContain("agent idle-killed after 1000ms with no stdout output");
+  });
+
+  it("the hard ceiling kills even a continuously streaming agent, with a ceiling-specific message (AC 12)", async () => {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+
+    // Idle window = 30 min; stream every 20 min so the idle timer never fires
+    // before the 60-min ceiling does.
+    const promise = spawnAgent("qa", "sys", "ctx", "task", "/tmp/project", 30 * 60 * 1000);
+
+    jest.advanceTimersByTime(20 * 60 * 1000);
+    child.stdout.emit("data", Buffer.from("heartbeat "));
+    jest.advanceTimersByTime(20 * 60 * 1000);
+    child.stdout.emit("data", Buffer.from("heartbeat "));
+    expect(child.kill).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(20 * 60 * 1000); // total runtime = HARD_CEILING_MS
+    const result = await promise;
+
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(result.exitCode).toBe(1);
+    expect(result.killKind).toBe("ceiling");
+    expect(result.output).toContain(`agent killed at hard ceiling ${HARD_CEILING_MS}ms`);
+    expect(result.output).not.toContain("idle-killed");
+  });
+
+  it("appends the kill message as a suffix line when buffered output exists, so signature classes still match", async () => {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const promise = spawnAgent("qa", "sys", "ctx", "task", "/tmp/project", 1000);
+    child.stdout.emit("data", Buffer.from("partial agent chatter..."));
+    jest.advanceTimersByTime(1000); // idle window elapses after the last chunk
+    const result = await promise;
+
+    expect(result.killKind).toBe("idle");
+    expect(result.output).toBe(
+      "partial agent chatter...\nagent idle-killed after 1000ms with no stdout output"
+    );
   });
 });

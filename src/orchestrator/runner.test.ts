@@ -18,6 +18,7 @@ import { describe, it, expect } from "@jest/globals";
 import {
   resolveEscalatedResumeTarget,
   buildMultiFeatureEscalatedMessage,
+  buildSalvageSection,
 } from "./runner";
 import { createFeatureStates, deriveSprintStatus } from "./multi-runner";
 import { FeatureState, StepState, createInitialState } from "./state";
@@ -167,5 +168,48 @@ describe("buildMultiFeatureEscalatedMessage", () => {
     expect(msg).toContain("beta");
     // more than one escalated → the required --feature=<slug> form (no brackets)
     expect(msg).toMatch(/--feature=<slug>/);
+  });
+});
+
+// ===========================================================================
+// buildSalvageSection — partial-artifact salvage task-description rendering
+// (Sprint 12, progress-aware-circuit-breaker, CB-4 AC 14; PO test-review
+// Condition A: the salvage section must list existing-vs-missing with the
+// do-not-recreate instruction)
+// ===========================================================================
+
+describe("buildSalvageSection (CB-4, AC 14)", () => {
+  it("lists already-existing validated files with a do-not-recreate instruction", () => {
+    const section = buildSalvageSection({
+      complete: false,
+      satisfied: ["tests/bdd/*.feature (tests/bdd/my-feature.feature)"],
+      missing: ["tests/integration/*"],
+    });
+
+    expect(section).toContain("tests/bdd/my-feature.feature");
+    expect(section).toMatch(/do NOT recreate/i);
+    expect(section).toMatch(/build on them/i);
+  });
+
+  it("lists the still-missing patterns as this attempt's actual job", () => {
+    const section = buildSalvageSection({
+      complete: false,
+      satisfied: ["tests/bdd/*.feature (tests/bdd/my-feature.feature)"],
+      missing: ["tests/integration/*"],
+    });
+
+    expect(section).toContain("tests/integration/*");
+    expect(section).toMatch(/still missing/i);
+    expect(section).toMatch(/actual job/i);
+  });
+
+  it("renders nothing when no expected outputs were salvaged", () => {
+    const section = buildSalvageSection({
+      complete: false,
+      satisfied: [],
+      missing: ["tests/bdd/*.feature", "tests/integration/*"],
+    });
+
+    expect(section).toBe("");
   });
 });
