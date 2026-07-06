@@ -29,10 +29,12 @@ import {
   parseRetroProposal,
   generateRetroDocument,
   updateRetroDocWithDecisions,
+  updateRetroDocWithAppliedChanges,
   applyImprovements,
   buildSprintContextForRetro,
   parseRetroSelection,
   RetroProposal,
+  ProposalOutcome,
 } from "./retro";
 import { Role } from "./workflow";
 import { resolveDinoNames, formatHandoffRole, DinoIdentity } from "./dino";
@@ -846,53 +848,17 @@ export async function runSprintFromStep(
     }
 
     // --- Handle Apply retro improvements (step 13) ---
+    // Thin wrapper around the shared executor (AC 6: parity with the
+    // multi-feature path is structural — one implementation, two seams).
     if (step.name === "Apply retro improvements") {
-      const retroFeedback = state.checkpoints.find(
-        (c) => c.type === "retro-review" && (c.status === "approved" || c.status === "changes-requested")
-      );
-      const retroProposals = (state.retroProposals ?? []) as RetroProposal[];
-      const selectedIndices = parseRetroSelection(
-        retroFeedback?.feedback,
-        retroProposals.length
-      );
-
-      if (selectedIndices.length > 0 && retroProposals.length > 0) {
-        const selectedProposals = selectedIndices
-          .map((i) => retroProposals[i - 1])
-          .filter((p): p is RetroProposal => p !== undefined);
-
-        if (selectedProposals.length > 0) {
-          const teamMdPath = path.join(projectPath, "TEAM.md");
-          const teamMd = fs.readFileSync(teamMdPath, "utf-8");
-          const updatedTeamMd = applyImprovements(teamMd, selectedProposals);
-          fs.writeFileSync(teamMdPath, updatedTeamMd);
-
-          try {
-            await git.add(teamMdPath);
-            await git.commit(`[PO] update: apply retrospective improvements from sprint ${sprint}`);
-          } catch { /* Non-critical */ }
-        }
-      }
-
-      // Update retro doc with decisions
-      const retroPath = path.join(projectPath, "docs", "sprints", `sprint-${sprint}-retro.md`);
-      if (fs.existsSync(retroPath)) {
-        const retroDoc = fs.readFileSync(retroPath, "utf-8");
-        const updatedRetroDoc = updateRetroDocWithDecisions(
-          retroDoc,
-          selectedIndices,
-          retroProposals.length
-        );
-        fs.writeFileSync(retroPath, updatedRetroDoc);
-        try {
-          await git.add(retroPath);
-          await git.commit(`[PO] update: sprint ${sprint} retro decisions recorded`);
-        } catch { /* Non-critical */ }
-      }
+      const report = await executeRetroApply(projectPath, sprint, state, git);
+      persistRetroApplyReport(state, report);
 
       stepState.attempts = 1;
       stepState.status = "complete";
       stepState.completedAt = new Date().toISOString();
+      // Persist-before-yield: report lands in state before the step reads
+      // as complete anywhere.
       saveSprintState(projectSlug, sprint, state);
 
       // Continue — will hit the "All steps complete" block
@@ -1364,7 +1330,10 @@ export async function runSprintFromStep(
   return {
     status: "complete",
     progress: renderProgressTable(state),
-    message: "Sprint complete! All steps finished successfully.",
+    message: appendRetroApplyQualification(
+      "Sprint complete! All steps finished successfully.",
+      state
+    ),
     state,
   };
 }
@@ -2259,7 +2228,10 @@ async function runMultiFeatureSprint(ctx: DispatchContext): Promise<SprintResult
     status: state.status === "complete" ? "complete" : "escalated",
     progress: renderProgressTable(state),
     message: state.status === "complete"
-      ? "Sprint complete! All features finished successfully."
+      ? appendRetroApplyQualification(
+          "Sprint complete! All features finished successfully.",
+          state
+        )
       : `Sprint finished in '${state.status}' status — see per-feature breakdown.`,
     state,
   };
@@ -2404,6 +2376,8 @@ async function runCollectRetroProposalsShared(
 
 /**
  * Shared "Apply retro improvements" body (step 13 — runs once per sprint).
+ * Thin wrapper around executeRetroApply — parity with the single-feature
+ * path is structural (AC 6: one implementation, two seams).
  */
 async function runApplyRetroImprovementsShared(
   ctx: DispatchContext,
@@ -2411,6 +2385,52 @@ async function runApplyRetroImprovementsShared(
 ): Promise<void> {
   const { projectPath, projectSlug, sprint, state, git } = ctx;
 
+  const report = await executeRetroApply(projectPath, sprint, state, git);
+  persistRetroApplyReport(state, report);
+
+  stepState.attempts = 1;
+  stepState.status = "complete";
+  stepState.completedAt = new Date().toISOString();
+  // Persist-before-yield: report lands in state before the step reads as
+  // complete anywhere.
+  saveSprintState(projectSlug, sprint, state);
+}
+
+// ─── Shared step-13 executor (Sprint 13: retro-improvements-not-applied) ───
+
+/**
+ * Per-proposal apply report for step 13 (AC 1/AC 4 accounting).
+ */
+export interface RetroApplyReport {
+  applied: number;
+  fallback: number;
+  alreadyPresent: number;
+  unplaced: number;
+  outcomes: ProposalOutcome[];
+  /** true when selection was skip/empty/no valid indices (AC 7) */
+  skipped: boolean;
+  /** AC 8: a caught apply-commit failure, surfaced instead of swallowed */
+  commitError?: string;
+}
+
+/**
+ * The single shared step-13 executor. Both runner paths (single-feature
+ * inline block and runApplyRetroImprovementsShared) are thin wrappers around
+ * this — parity (AC 6) is structural. QA still asserts both production seams
+ * independently; a future refactor that forks the paths again must fail
+ * those tests.
+ *
+ * Never throws (errors-returned-not-thrown convention): I/O failures
+ * degrade to synthesized "unplaced" outcomes so the outcome-total invariant
+ * (outcomes.length === selectedProposals.length) holds on EVERY path (AC 1).
+ * Does not persist state — callers own saveSprintState.
+ */
+export async function executeRetroApply(
+  projectPath: string,
+  sprint: number,
+  state: SprintState,
+  git: SimpleGit
+): Promise<RetroApplyReport> {
   const retroFeedback = state.checkpoints.find(
     (c) => c.type === "retro-review" && (c.status === "approved" || c.status === "changes-requested")
   );
@@ -2419,41 +2439,186 @@ async function runApplyRetroImprovementsShared(
     retroFeedback?.feedback,
     retroProposals.length
   );
+  const selectedProposals = selectedIndices
+    .map((i) => retroProposals[i - 1])
+    .filter((p): p is RetroProposal => p !== undefined);
 
-  if (selectedIndices.length > 0 && retroProposals.length > 0) {
-    const selectedProposals = selectedIndices
-      .map((i) => retroProposals[i - 1])
-      .filter((p): p is RetroProposal => p !== undefined);
+  const report: RetroApplyReport = {
+    applied: 0,
+    fallback: 0,
+    alreadyPresent: 0,
+    unplaced: 0,
+    outcomes: [],
+    skipped: false,
+  };
 
-    if (selectedProposals.length > 0) {
-      const teamMdPath = path.join(projectPath, "TEAM.md");
-      const teamMd = fs.readFileSync(teamMdPath, "utf-8");
-      const updatedTeamMd = applyImprovements(teamMd, selectedProposals);
-      fs.writeFileSync(teamMdPath, updatedTeamMd);
-      try {
-        await git.add(teamMdPath);
-        await git.commit(`[PO] update: apply retrospective improvements from sprint ${sprint}`);
-      } catch { /* non-critical */ }
-    }
+  // AC 7 (frozen skip path): skip/empty/out-of-range selection → no TEAM.md
+  // read, no fallback writes, no new warnings. The retro-doc decisions
+  // update still runs (pre-existing behavior, unchanged).
+  if (selectedProposals.length === 0) {
+    report.skipped = true;
+    await updateRetroDocBestEffort(
+      projectPath,
+      sprint,
+      git,
+      selectedIndices,
+      retroProposals.length,
+      null
+    );
+    return report;
   }
 
-  const retroPath = path.join(projectPath, "docs", "sprints", `sprint-${sprint}-retro.md`);
-  if (fs.existsSync(retroPath)) {
-    const retroDoc = fs.readFileSync(retroPath, "utf-8");
-    const updatedRetroDoc = updateRetroDocWithDecisions(
-      retroDoc,
-      selectedIndices,
-      retroProposals.length
+  const teamMdPath = path.join(projectPath, "TEAM.md");
+  let outcomes: ProposalOutcome[];
+
+  try {
+    const teamMd = fs.readFileSync(teamMdPath, "utf-8");
+    const result = applyImprovements(teamMd, selectedProposals, sprint);
+    outcomes = result.outcomes;
+
+    if (!result.changed) {
+      // AC 5 change verification: byte-identical content while the function
+      // CLAIMS placement is the defect signal — downgrade those outcomes to
+      // "unplaced" and surface it (never swallow). All-"already-present"
+      // with changed === false is the legitimate re-run case, untouched.
+      for (const o of outcomes) {
+        if (o.placement === "applied" || o.placement === "applied-fallback") {
+          o.placement = "unplaced";
+          o.placedAt = undefined;
+          o.reason = "apply reported success but content unchanged";
+        }
+      }
+    } else {
+      fs.writeFileSync(teamMdPath, result.content);
+      // AC 8: commit only on change; a caught failure is surfaced in the
+      // report (the old `/* non-critical */` silent absorb is gone), but
+      // never corrupts step flow.
+      try {
+        await git.add(teamMdPath);
+        await git.commit(
+          `[PO] update: apply retrospective improvements from sprint ${sprint}`
+        );
+      } catch (err) {
+        report.commitError = truncateErrorSummary(
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+    }
+  } catch (err) {
+    // TEAM.md read/write failure → synthesize one "unplaced" outcome per
+    // selected proposal with the I/O error as reason (AC 1 invariant on the
+    // failure path). No throw — step completes qualified; circuit breaker
+    // untouched (Out of Scope).
+    const reason = truncateErrorSummary(
+      err instanceof Error ? err.message : String(err)
     );
-    fs.writeFileSync(retroPath, updatedRetroDoc);
+    outcomes = selectedProposals.map((p) => ({
+      role: p.role,
+      section: p.section,
+      placement: "unplaced" as const,
+      reason,
+    }));
+  }
+
+  for (const o of outcomes) {
+    if (o.placement === "applied") report.applied++;
+    else if (o.placement === "applied-fallback") report.fallback++;
+    else if (o.placement === "already-present") report.alreadyPresent++;
+    else report.unplaced++;
+  }
+  report.outcomes = outcomes;
+
+  // AC 3: record decisions + per-proposal placement outcomes in the retro
+  // doc. Best-effort — a missing doc degrades gracefully and never blocks
+  // ACs 1/2/4.
+  await updateRetroDocBestEffort(
+    projectPath,
+    sprint,
+    git,
+    selectedIndices,
+    retroProposals.length,
+    outcomes
+  );
+
+  return report;
+}
+
+/**
+ * Update the sprint retro document with user decisions and (when proposals
+ * were adopted) per-proposal placement outcomes (AC 3). Best-effort: a
+ * missing or unwritable doc is skipped silently (Edge: graceful
+ * degradation); the doc commit failure remains non-critical.
+ */
+async function updateRetroDocBestEffort(
+  projectPath: string,
+  sprint: number,
+  git: SimpleGit,
+  selectedIndices: number[],
+  totalProposals: number,
+  outcomes: ProposalOutcome[] | null
+): Promise<void> {
+  const retroPath = path.join(projectPath, "docs", "sprints", `sprint-${sprint}-retro.md`);
+  try {
+    if (!fs.existsSync(retroPath)) return;
+    let retroDoc = fs.readFileSync(retroPath, "utf-8");
+    retroDoc = updateRetroDocWithDecisions(retroDoc, selectedIndices, totalProposals);
+    if (outcomes && outcomes.length > 0) {
+      retroDoc = updateRetroDocWithAppliedChanges(retroDoc, outcomes);
+    }
+    fs.writeFileSync(retroPath, retroDoc);
     try {
       await git.add(retroPath);
       await git.commit(`[PO] update: sprint ${sprint} retro decisions recorded`);
-    } catch { /* non-critical */ }
+    } catch { /* non-critical — doc reporting is best-effort */ }
+  } catch { /* best-effort (AC 3 graceful degradation) */ }
+}
+
+/**
+ * Persist the step-13 report into sprint state (Data Model: additive
+ * optional field). A skipped selection leaves state untouched — absent
+ * retroApply renders no qualification line (AC 7).
+ */
+function persistRetroApplyReport(state: SprintState, report: RetroApplyReport): void {
+  if (report.skipped) return;
+  state.retroApply = {
+    applied: report.applied,
+    fallback: report.fallback,
+    alreadyPresent: report.alreadyPresent,
+    unplaced: report.unplaced,
+    outcomes: report.outcomes,
+    ...(report.commitError ? { commitError: report.commitError } : {}),
+  };
+}
+
+/**
+ * AC 4 (qualified completion): append the retro-apply accounting to the
+ * caller-visible sprint result whenever proposals were adopted. An
+ * unqualified message is only possible when retroApply is absent (skip) —
+ * and even an all-"applied" run states its counts.
+ */
+function appendRetroApplyQualification(base: string, state: SprintState): string {
+  const r = state.retroApply;
+  if (!r) return base;
+
+  let msg =
+    `${base} Retro improvements: ${r.applied} applied, ${r.fallback} at fallback, ` +
+    `${r.alreadyPresent} already present, ${r.unplaced} NOT applied.`;
+
+  if (r.fallback + r.unplaced > 0) {
+    const details = r.outcomes
+      .filter((o) => o.placement === "applied-fallback" || o.placement === "unplaced")
+      .map((o) =>
+        o.placement === "applied-fallback"
+          ? `\n- ${o.role.toUpperCase()} proposal → fallback ("Adopted Retro Improvements (Unplaced)"); target "${o.section}" not found`
+          : `\n- ${o.role.toUpperCase()} proposal → NOT APPLIED: ${o.reason ?? "unknown reason"}`
+      )
+      .join("");
+    msg += details;
   }
 
-  stepState.attempts = 1;
-  stepState.status = "complete";
-  stepState.completedAt = new Date().toISOString();
-  saveSprintState(projectSlug, sprint, state);
+  if (r.commitError) {
+    msg += `\nWarning: TEAM.md apply commit failed: ${r.commitError}`;
+  }
+
+  return msg;
 }

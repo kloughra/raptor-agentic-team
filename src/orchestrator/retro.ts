@@ -150,71 +150,144 @@ export function updateRetroDocWithDecisions(
     );
 }
 
+// ─── Outcome-returning apply pipeline (Sprint 13: retro-improvements-not-applied) ───
+
+export type ProposalPlacement =
+  | "applied"
+  | "applied-fallback"
+  | "already-present"
+  | "unplaced";
+
+export interface ProposalOutcome {
+  /** proposal.role */
+  role: string;
+  /** the proposal's requested Section (verbatim) */
+  section: string;
+  placement: ProposalPlacement;
+  /** actual heading text where inserted (first match wins, recorded) */
+  placedAt?: string;
+  /** required when placement === "unplaced" */
+  reason?: string;
+}
+
+export interface ApplyImprovementsResult {
+  /** updated TEAM.md content */
+  content: string;
+  /** one entry per input proposal, same order (AC 1 invariant) */
+  outcomes: ProposalOutcome[];
+  /** content !== input (AC 5 signal) */
+  changed: boolean;
+}
+
+/**
+ * Fallback section for adopted proposals whose target section could not be
+ * located (Open Question 3 — Architect decision). Exact string is a contract
+ * consumed by tests and future tooling.
+ */
+export const FALLBACK_SECTION_HEADING = "## Adopted Retro Improvements (Unplaced)";
+
+const FALLBACK_PLACED_AT = "Adopted Retro Improvements (Unplaced)";
+
+const FALLBACK_SECTION_COMMENT =
+  "<!-- Proposals adopted at retro review whose target section could not be located.\n" +
+  "     Relocate manually; do not delete without applying. -->";
+
 /**
  * Apply selected improvements to TEAM.md content.
- * Returns the updated TEAM.md content.
+ *
+ * Every input proposal produces exactly one recorded outcome (AC 1 — no
+ * silent drop). Section misses land under FALLBACK_SECTION_HEADING with
+ * sprint/role/target-section attribution (AC 2). Idempotency is content-based:
+ * a rendered block already present in the content records "already-present"
+ * and is never inserted twice (Edge: step-13 re-run/resume).
  */
 export function applyImprovements(
   teamMdContent: string,
-  proposals: RetroProposal[]
-): string {
+  proposals: RetroProposal[],
+  sprint: number
+): ApplyImprovementsResult {
   let content = teamMdContent;
+  const outcomes: ProposalOutcome[] = [];
 
   for (const proposal of proposals) {
-    // Find the target section by header matching
-    // Try multiple heading levels
-    const patterns = [
-      `### ${proposal.section}`,
-      `## ${proposal.section}`,
-      `# ${proposal.section}`,
-    ];
+    const lines = content.split("\n");
+    const heading = findHeadingLine(lines, proposal.section);
 
-    let sectionIndex = -1;
-    let matchedPattern = "";
-    for (const pattern of patterns) {
-      const idx = content.indexOf(pattern);
-      if (idx !== -1) {
-        sectionIndex = idx;
-        matchedPattern = pattern;
-        break;
+    if (heading) {
+      const block = renderTargetBlock(proposal);
+      if (content.includes(block)) {
+        outcomes.push({
+          role: proposal.role,
+          section: proposal.section,
+          placement: "already-present",
+          placedAt: heading.text,
+        });
+        continue;
       }
-    }
-
-    if (sectionIndex === -1) {
-      // Section not found — skip this proposal
-      continue;
-    }
-
-    // Find the end of the section (next heading of same or higher level)
-    const headingLevel = matchedPattern.split(" ")[0].length; // number of #s
-    const sectionEnd = findSectionEnd(content, sectionIndex, headingLevel);
-
-    switch (proposal.type) {
-      case "addition": {
-        // Insert before the section end
-        const insertPoint = sectionEnd;
-        const addition = `\n\n> **[Sprint Retro Improvement]** ${proposal.proposal}\n`;
-        content = content.slice(0, insertPoint) + addition + content.slice(insertPoint);
-        break;
+      const endLine = findSectionEndLine(lines, heading.lineIdx, heading.level);
+      lines.splice(endLine, 0, "", block, "");
+      content = lines.join("\n");
+      outcomes.push({
+        role: proposal.role,
+        section: proposal.section,
+        placement: "applied",
+        placedAt: heading.text,
+      });
+    } else {
+      // Section miss → fallback, never dropped (AC 2). The rendered marker
+      // embeds the sprint number, making blocks sprint-unique for the
+      // content-based idempotency check.
+      const block = renderFallbackBlock(proposal, sprint);
+      if (content.includes(block)) {
+        outcomes.push({
+          role: proposal.role,
+          section: proposal.section,
+          placement: "already-present",
+          placedAt: FALLBACK_PLACED_AT,
+        });
+        continue;
       }
-      case "modification": {
-        // Add a note at the end of the section
-        const insertPoint = sectionEnd;
-        const modification = `\n\n> **[Sprint Retro Modification]** ${proposal.proposal}\n`;
-        content = content.slice(0, insertPoint) + modification + content.slice(insertPoint);
-        break;
-      }
-      case "removal": {
-        // Comment out by adding a note rather than deleting
-        const insertPoint = sectionEnd;
-        const removal = `\n\n> **[Sprint Retro — Flagged for Removal]** ${proposal.proposal}\n`;
-        content = content.slice(0, insertPoint) + removal + content.slice(insertPoint);
-        break;
-      }
+      content = insertIntoFallbackSection(content, block);
+      outcomes.push({
+        role: proposal.role,
+        section: proposal.section,
+        placement: "applied-fallback",
+        placedAt: FALLBACK_PLACED_AT,
+      });
     }
   }
 
-  return content;
+  return { content, outcomes, changed: content !== teamMdContent };
+}
+
+/**
+ * Update the retro document's "## Applied Changes" section with one line per
+ * outcome (AC 3). Pure string-replace on the "(None yet)" stub, mirroring
+ * updateRetroDocWithDecisions. If the stub is absent (re-run, hand-edited
+ * doc), returns the input unchanged — graceful degradation, best-effort.
+ */
+export function updateRetroDocWithAppliedChanges(
+  retroDoc: string,
+  outcomes: ProposalOutcome[]
+): string {
+  const stub = "## Applied Changes\n(None yet)";
+  if (!retroDoc.includes(stub) || outcomes.length === 0) return retroDoc;
+
+  const lines = outcomes.map((o) => {
+    const role = o.role.toUpperCase();
+    switch (o.placement) {
+      case "applied":
+        return `- ${role} proposal → applied at "${o.placedAt}"`;
+      case "already-present":
+        return `- ${role} proposal → already present at "${o.placedAt}"`;
+      case "applied-fallback":
+        return `- ${role} proposal → fallback ("${FALLBACK_PLACED_AT}"); target "${o.section}" not found`;
+      case "unplaced":
+        return `- ${role} proposal → NOT APPLIED: ${o.reason ?? "unknown reason"}`;
+    }
+  });
+
+  return retroDoc.replace(stub, `## Applied Changes\n${lines.join("\n")}`);
 }
 
 /**
@@ -273,15 +346,123 @@ export function parseRetroSelection(
 
 // --- Internal helpers ---
 
-function findSectionEnd(content: string, sectionStart: number, headingLevel: number): number {
-  const afterHeader = content.indexOf("\n", sectionStart);
-  if (afterHeader === -1) return content.length;
+/**
+ * Normalize heading/section text for matching (Open Question 2 — Architect
+ * ruling): trim, lowercase, collapse internal whitespace, strip a leading
+ * `#`-run (agents sometimes echo the hashes). Deliberately NO fuzzy,
+ * substring, or prefix matching — a wrong-section placement is worse than a
+ * well-attributed fallback.
+ */
+function normalizeHeadingText(text: string): string {
+  return text
+    .trim()
+    .replace(/^#+\s*/, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  // Look for the next heading of the same or higher level
-  const rest = content.slice(afterHeader);
-  const headingPattern = new RegExp(`^#{1,${headingLevel}} `, "m");
-  const nextHeading = rest.search(headingPattern);
+function isFenceLine(line: string): boolean {
+  return line.trimStart().startsWith("```");
+}
 
-  if (nextHeading === -1) return content.length;
-  return afterHeader + nextHeading;
+interface HeadingLine {
+  lineIdx: number;
+  level: number;
+  /** verbatim heading text (hashes stripped, trimmed) — recorded in placedAt */
+  text: string;
+}
+
+/**
+ * Line-based heading scan. Tracks fenced-code state (``` toggles); headings
+ * inside fences are non-matchable (Edge Case: TEAM.md embeds templates with
+ * `#` headings inside code fences). First match in document order wins.
+ */
+function findHeadingLine(lines: string[], section: string): HeadingLine | null {
+  const target = normalizeHeadingText(section);
+  if (target === "") return null;
+
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (isFenceLine(lines[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = lines[i].match(/^(#{1,6})\s+(.*)$/);
+    if (m && normalizeHeadingText(m[2]) === target) {
+      return { lineIdx: i, level: m[1].length, text: m[2].trim() };
+    }
+  }
+  return null;
+}
+
+/**
+ * Find the line index where the section starting at headingLineIdx ends: the
+ * next heading of the same or higher level OUTSIDE any code fence (a fenced
+ * heading never terminates a section early), or the end of the document.
+ */
+function findSectionEndLine(
+  lines: string[],
+  headingLineIdx: number,
+  headingLevel: number
+): number {
+  let inFence = false;
+  for (let i = headingLineIdx + 1; i < lines.length; i++) {
+    if (isFenceLine(lines[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = lines[i].match(/^(#{1,6})\s/);
+    if (m && m[1].length <= headingLevel) return i;
+  }
+  return lines.length;
+}
+
+/** Blockquote markers for target-section insertion (pre-existing formats). */
+function renderTargetBlock(proposal: RetroProposal): string {
+  const markers: Record<RetroProposal["type"], string> = {
+    addition: "Sprint Retro Improvement",
+    modification: "Sprint Retro Modification",
+    removal: "Sprint Retro — Flagged for Removal",
+  };
+  return `> **[${markers[proposal.type]}]** ${proposal.proposal}`;
+}
+
+/**
+ * Fallback entry marker — attribution (sprint + role + intended section +
+ * type) inline (AC 2 / Open Question 3). Exact shape is a contract.
+ */
+function renderFallbackBlock(proposal: RetroProposal, sprint: number): string {
+  return `> **[Sprint ${sprint} Retro — ${proposal.role.toUpperCase()}, target section: "${proposal.section}"]** (${proposal.type}) ${proposal.proposal}`;
+}
+
+/**
+ * Insert a fallback entry under FALLBACK_SECTION_HEADING, creating the
+ * section at the end of the document if absent.
+ */
+function insertIntoFallbackSection(content: string, block: string): string {
+  const lines = content.split("\n");
+  let heading = findHeadingLine(lines, FALLBACK_SECTION_HEADING);
+
+  if (!heading) {
+    // Trim trailing blank lines, then append the section at document end.
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
+      lines.pop();
+    }
+    lines.push("", FALLBACK_SECTION_HEADING, "", FALLBACK_SECTION_COMMENT);
+    heading = {
+      lineIdx: lines.length - 3,
+      level: 2,
+      text: FALLBACK_PLACED_AT,
+    };
+  }
+
+  const endLine = findSectionEndLine(lines, heading.lineIdx, heading.level);
+  lines.splice(endLine, 0, "", block);
+
+  // Preserve a trailing newline at document end.
+  if (lines[lines.length - 1].trim() !== "") lines.push("");
+  return lines.join("\n");
 }
