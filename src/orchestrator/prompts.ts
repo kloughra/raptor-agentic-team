@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Role, SPRINT_WORKFLOW } from "./workflow";
+import { classifyPattern, matchExpectedOutput } from "./glob-match";
 import { DinoIdentity, resolveDinoNames, buildDinoIdentityPreamble } from "./dino";
 
 const TEAM_MD_MAX_SIZE = 8 * 1024; // 8KB cap for TEAM.md injection
@@ -164,31 +165,51 @@ export function buildStepContext(
   const sections: string[] = [];
 
   for (const pattern of step.inputArtifacts) {
-    const resolvedPattern = pattern.replace("*", featureSlug);
-    const filePath = path.join(projectPath, resolvedPattern);
+    // Route through the same matcher used for output validation (single
+    // matching implementation — see glob-match.ts). Slug-scoped patterns
+    // inject exactly the feature's own artifacts instead of guessing a
+    // literal path and then dumping the whole directory.
+    const { matchedFiles } = matchExpectedOutput(pattern, projectPath, featureSlug);
 
-    // Try exact path first, then try as-is if it contains a real glob
-    if (fs.existsSync(filePath)) {
-      const content = fs.readFileSync(filePath, "utf-8");
-      sections.push(`--- ${resolvedPattern} ---\n${content}`);
-    } else {
-      // Try to find files in the directory matching the pattern
-      const dir = path.dirname(filePath);
-      if (fs.existsSync(dir)) {
-        try {
-          const files = fs.readdirSync(dir);
-          for (const file of files) {
-            const fullPath = path.join(dir, file);
-            if (fs.statSync(fullPath).isFile()) {
-              const content = fs.readFileSync(fullPath, "utf-8");
-              sections.push(
-                `--- ${path.relative(projectPath, fullPath)} ---\n${content}`
-              );
-            }
+    if (matchedFiles.length > 0) {
+      if (classifyPattern(pattern) === "double-star") {
+        // Broad code patterns (e.g. src/**/*.ts) can match the entire tree —
+        // inject a file listing, not contents, to keep context bounded.
+        sections.push(
+          `--- ${pattern} (matched files) ---\n${matchedFiles.join("\n")}`
+        );
+      } else {
+        for (const rel of matchedFiles) {
+          try {
+            const content = fs.readFileSync(path.join(projectPath, rel), "utf-8");
+            sections.push(`--- ${rel} ---\n${content}`);
+          } catch {
+            // Skip unreadable files
           }
-        } catch {
-          // Skip unreadable directories
         }
+      }
+      continue;
+    }
+
+    // Fallback (pre-existing behavior): no slug-scoped match — read every
+    // file in the pattern's directory so unconventionally-named artifacts
+    // still reach the agent.
+    const resolvedPattern = pattern.replace("*", featureSlug);
+    const dir = path.dirname(path.join(projectPath, resolvedPattern));
+    if (fs.existsSync(dir)) {
+      try {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+          const fullPath = path.join(dir, file);
+          if (fs.statSync(fullPath).isFile()) {
+            const content = fs.readFileSync(fullPath, "utf-8");
+            sections.push(
+              `--- ${path.relative(projectPath, fullPath)} ---\n${content}`
+            );
+          }
+        }
+      } catch {
+        // Skip unreadable directories
       }
     }
   }
