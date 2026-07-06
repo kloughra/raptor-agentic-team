@@ -35,7 +35,10 @@
 **Impact**: Future sprints get a deterministic revision loop: review feedback always re-engages implementation, revisions are self-verified to contain real code changes before handoff, and reviewers never spend a cycle rejecting a no-op. This directly eliminates the `pr-review-feedback-routes-to-wrong-step` failure class and reduces wasted circuit-breaker attempts.
 
 ## User Decision
-(Pending user review)
+- Proposal 1: Deferred
+- Proposal 2: Adopted
+- Proposal 3: Adopted
+- Proposal 4: Deferred
 
 ## Applied Changes
 (None yet)
