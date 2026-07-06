@@ -22,20 +22,21 @@ describe("Artifact Output Validation", () => {
   // --- Layer 2: resolveExpectedOutputPaths ---
 
   describe("resolveExpectedOutputPaths", () => {
-    it("resolves glob patterns to concrete paths using feature slug", () => {
+    it("produces slug-scoped descriptions that reference the original pattern", () => {
       const patterns = ["docs/specs/*.md", "docs/architecture/*.md"];
       const resolved = resolveExpectedOutputPaths(patterns, "my-feature");
-      expect(resolved).toEqual([
-        "docs/specs/my-feature.md",
-        "docs/architecture/my-feature.md",
-      ]);
+      expect(resolved).toHaveLength(2);
+      expect(resolved[0]).toContain("docs/specs/*.md");
+      expect(resolved[0]).toContain("docs/specs/my-feature.md"); // conventional example
+      expect(resolved[1]).toContain("docs/architecture/*.md");
     });
 
-    it("filters out double-star globs (handled by directory check)", () => {
+    it("includes double-star globs (matched at any depth, no slug requirement)", () => {
       const patterns = ["src/**/*.ts"];
       const resolved = resolveExpectedOutputPaths(patterns, "my-feature");
-      // Double-star globs are not resolvable to a single path — they're filtered out
-      expect(resolved).toEqual([]);
+      // Old behavior filtered these out; now every pattern gets a description
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0]).toContain("src/**/*.ts");
     });
 
     it("returns empty array for steps with no expected outputs", () => {
@@ -43,14 +44,12 @@ describe("Artifact Output Validation", () => {
       expect(resolved).toEqual([]);
     });
 
-    it("drops patterns that cannot be fully resolved", () => {
-      // A pattern with multiple wildcards that can't be resolved
-      const patterns = ["docs/specs/*.md", "src/**/components/*.tsx"];
-      const resolved = resolveExpectedOutputPaths(patterns, "my-feature");
-      // First resolves, second still has a * after replacement
-      expect(resolved).toContain("docs/specs/my-feature.md");
-      // The second should be filtered out since it still contains *
-      expect(resolved.every((p) => !p.includes("*"))).toBe(true);
+    it("never emits a bare extensionless literal (the Sprint-8 trap)", () => {
+      const resolved = resolveExpectedOutputPaths(["tests/integration/*"], "my-feature");
+      expect(resolved).toHaveLength(1);
+      // The agent must never be instructed to create tests/integration/my-feature
+      expect(resolved[0]).not.toBe("tests/integration/my-feature");
+      expect(resolved[0]).toContain("tests/integration/*");
     });
   });
 
@@ -76,11 +75,12 @@ describe("Artifact Output Validation", () => {
       expect(missing).toEqual([]);
     });
 
-    it("returns missing files when required outputs do not exist", () => {
+    it("returns missing patterns when required outputs do not exist", () => {
       // Don't create the file
       const step = makeStep(["docs/specs/*.md"]);
       const missing = validateRequiredOutputs(step, "my-feature", tmpDir);
-      expect(missing).toContain("docs/specs/my-feature.md");
+      // The missing list reports the ORIGINAL pattern, not a resolved literal
+      expect(missing).toContain("docs/specs/*.md");
     });
 
     it("returns empty array for steps with no expected outputs", () => {
@@ -97,8 +97,8 @@ describe("Artifact Output Validation", () => {
 
       const step = makeStep(["docs/specs/*.md", "docs/architecture/*.md"]);
       const missing = validateRequiredOutputs(step, "my-feature", tmpDir);
-      expect(missing).toContain("docs/architecture/my-feature.md");
-      expect(missing).not.toContain("docs/specs/my-feature.md");
+      expect(missing).toContain("docs/architecture/*.md");
+      expect(missing).not.toContain("docs/specs/*.md");
     });
 
     it("handles unresolvable glob patterns with directory-level check", () => {
@@ -195,15 +195,16 @@ describe("Artifact Output Validation", () => {
       expect(demoStep!.expectedOutputs).toEqual([]);
     });
 
-    it("resolveExpectedOutputPaths produces concrete paths for all artifact steps", () => {
+    it("resolveExpectedOutputPaths produces a description for every artifact step pattern", () => {
       const artifactSteps = SPRINT_WORKFLOW.filter((s) => s.expectedOutputs.length > 0);
       for (const step of artifactSteps) {
         const resolved = resolveExpectedOutputPaths(step.expectedOutputs, "test-feature");
-        // At least some patterns should resolve (glob-only patterns get filtered)
-        // The important thing is no resolved path contains a wildcard
-        for (const p of resolved) {
-          expect(p).not.toContain("*");
-        }
+        // Every pattern gets a description that references the original pattern,
+        // so the agent instruction and the validation gate cannot drift
+        expect(resolved).toHaveLength(step.expectedOutputs.length);
+        step.expectedOutputs.forEach((pattern, i) => {
+          expect(resolved[i]).toContain(pattern);
+        });
       }
     });
   });
@@ -212,10 +213,10 @@ describe("Artifact Output Validation", () => {
 
   describe("cascade prevention scenario", () => {
     it("detects missing spec after PO exits without writing file", () => {
-      // Simulate: PO agent exits 0, but docs/specs/my-feature.md doesn't exist
+      // Simulate: PO agent exits 0, but no spec file was written
       const poStep = SPRINT_WORKFLOW.find((s) => s.name === "Author specification")!;
       const missing = validateRequiredOutputs(poStep, "my-feature", tmpDir);
-      expect(missing).toContain("docs/specs/my-feature.md");
+      expect(missing).toContain("docs/specs/*.md");
     });
 
     it("detects missing architecture after Architect exits without writing file", () => {
@@ -226,7 +227,7 @@ describe("Artifact Output Validation", () => {
 
       const archStep = SPRINT_WORKFLOW.find((s) => s.name === "Architecture design")!;
       const missing = validateRequiredOutputs(archStep, "my-feature", tmpDir);
-      expect(missing).toContain("docs/architecture/my-feature.md");
+      expect(missing).toContain("docs/architecture/*.md");
     });
 
     it("detects missing BDD tests after QA exits without writing file", () => {
@@ -240,7 +241,7 @@ describe("Artifact Output Validation", () => {
 
       const qaStep = SPRINT_WORKFLOW.find((s) => s.name === "Write tests")!;
       const missing = validateRequiredOutputs(qaStep, "my-feature", tmpDir);
-      expect(missing).toContain("tests/bdd/my-feature.feature");
+      expect(missing).toContain("tests/bdd/*.feature");
     });
 
     it("passes when all artifacts are present", () => {
@@ -257,8 +258,12 @@ describe("Artifact Output Validation", () => {
       fs.writeFileSync(path.join(tmpDir, "docs/backlog.md"), "## Sprint 1\n- [ ] my-feature: test");
       fs.writeFileSync(path.join(tmpDir, "docs/sprints/my-feature.md"), "# Sprint summary");
       fs.writeFileSync(path.join(tmpDir, "tests/bdd/my-feature.feature"), "Feature: ...");
-      // tests/integration/* resolves to tests/integration/my-feature (exact path)
-      fs.writeFileSync(path.join(tmpDir, "tests/integration/my-feature"), "test()");
+      // tests/integration/* now matches the CONVENTIONAL filename — the old
+      // extensionless-literal resolution (tests/integration/my-feature) is gone
+      fs.writeFileSync(
+        path.join(tmpDir, "tests/integration/my-feature.integration.test.ts"),
+        "test()"
+      );
       fs.writeFileSync(path.join(tmpDir, "src/index.ts"), "export {}");
       fs.writeFileSync(path.join(tmpDir, "TEAM.md"), "# Team process");
 
