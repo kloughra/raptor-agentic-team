@@ -79,20 +79,34 @@ export function resolveArtifacts(
     const resolvedPath = req.pattern.replace("{slug}", featureSlug);
     const fullPath = path.join(projectPath, resolvedPath);
 
-    if (fs.existsSync(fullPath)) {
-      try {
-        const content = fs.readFileSync(fullPath, "utf-8");
-        artifacts.push({
-          label: req.label,
-          path: resolvedPath,
-          content: content.slice(0, cap),
-        });
-      } catch {
-        if (req.required) {
-          missing.push(resolvedPath);
-        }
+    // Only regular files count as artifacts. A directory at the resolved
+    // path (e.g. the Sprint-8 workaround dir at tests/integration/{slug})
+    // is treated exactly like an absent artifact: required → reported
+    // missing, optional → silently skipped. statSync follows symlinks, so
+    // a symlink to a file reads normally and a symlink to a directory is
+    // skipped. Never throws (EISDIR/ENOENT degrade to not-a-file).
+    let isFile = false;
+    try {
+      isFile = fs.statSync(fullPath).isFile();
+    } catch {
+      isFile = false; // absent path, broken symlink, or unreadable
+    }
+
+    if (!isFile) {
+      if (req.required) {
+        missing.push(resolvedPath);
       }
-    } else {
+      continue;
+    }
+
+    try {
+      const content = fs.readFileSync(fullPath, "utf-8");
+      artifacts.push({
+        label: req.label,
+        path: resolvedPath,
+        content: content.slice(0, cap),
+      });
+    } catch {
       if (req.required) {
         missing.push(resolvedPath);
       }
