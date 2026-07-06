@@ -22,7 +22,7 @@ import { renderProgressTable } from "./progress";
 import { buildCheckpointPrompt, CheckpointPrompt } from "./checkpoints";
 import { buildRolePrompt, buildStepContext, buildTeamMdContext } from "./prompts";
 import { spawnAgent } from "./agents";
-import { executeMerge, updatePrDodChecklist } from "./merge";
+import { executeMerge, updatePrDodChecklist, MergeResult } from "./merge";
 import { generateSprintSummary, loadSprintSummaries } from "./summary";
 import {
   buildRetroPrompt,
@@ -921,53 +921,76 @@ export async function runSprintFromStep(
         };
       }
 
-      const mergeResult = await executeMerge(
-        projectPath,
-        featureSlug,
-        sprint,
-        branchName
-      );
+      // C1 (AC #1, #2, #3): in-place bounded merge retry. The pre-fix code
+      // executed `continue` here on a below-cap failure — which ADVANCED the
+      // step-loop index and silently SKIPPED the merge (the Sprint 10 /
+      // Sprint 12 false-"Sprint complete"). The retry is now a local do/while
+      // around the merge attempt — never index games on the step loop
+      // (architecture constraint 1). Termination: attempts increments on
+      // EVERY failed executeMerge invocation and the escalation branch
+      // returns at MAX_RETRY_ATTEMPTS, so the loop runs at most
+      // MAX_RETRY_ATTEMPTS iterations (fewer if attempts was already non-zero
+      // from a resumed state — resumed attempts still count toward the cap).
+      let mergeResult: MergeResult;
+      do {
+        mergeResult = await executeMerge(
+          projectPath,
+          featureSlug,
+          sprint,
+          branchName
+        );
 
-      if (!mergeResult.success) {
-        // Record failure and use circuit breaker
-        stepState.attempts++;
-        stepState.failures.push({
-          attempt: stepState.attempts,
-          errorSummary: truncateErrorSummary(mergeResult.error || "Merge failed"),
-          timestamp: new Date().toISOString(),
-          hadPartialArtifacts: false,
-        });
+        if (!mergeResult.success) {
+          // Failure accounting — semantics unchanged (AC #2): attempts count
+          // equals executeMerge invocation count; every failure appends one
+          // truncated record. C5 (additive): classification + signature
+          // persisted for post-mortems — no decideAfterFailure wiring, retry
+          // behavior unchanged (architecture constraint 6).
+          const errorSummary = truncateErrorSummary(mergeResult.error || "Merge failed");
+          stepState.attempts++;
+          stepState.failures.push({
+            attempt: stepState.attempts,
+            errorSummary,
+            timestamp: new Date().toISOString(),
+            hadPartialArtifacts: false,
+            classification: classifyFailure(errorSummary),
+            signature: deriveFailureSignature(errorSummary),
+          });
 
-        if (stepState.attempts >= MAX_RETRY_ATTEMPTS) {
-          stepState.status = "escalated";
-          state.status = "escalated";
-          saveSprintState(projectSlug, sprint, state);
+          if (stepState.attempts >= MAX_RETRY_ATTEMPTS) {
+            // Escalation block preserved verbatim (AC #3, #9): step 9 ->
+            // escalated, sprint -> escalated, [ESCALATE] commit, early
+            // return — steps 10–13 never run, no [HANDOFF] is created.
+            stepState.status = "escalated";
+            state.status = "escalated";
+            saveSprintState(projectSlug, sprint, state);
 
-          // Create escalation commit
-          try {
-            const summary = stepState.failures.map(
-              (f) => `Attempt ${f.attempt}: ${f.errorSummary}`
-            ).join("; ");
-            await git.commit(
-              `[ESCALATE] ${formatHandoffRole("engineer", dinoNames)}: step ${step.step} (${step.name}) failed ${stepState.attempts} times — requesting user intervention.\nSummary: ${summary}`,
-              { "--allow-empty": null }
-            );
-          } catch {
-            // Non-critical
+            // Create escalation commit
+            try {
+              const summary = stepState.failures.map(
+                (f) => `Attempt ${f.attempt}: ${f.errorSummary}`
+              ).join("; ");
+              await git.commit(
+                `[ESCALATE] ${formatHandoffRole("engineer", dinoNames)}: step ${step.step} (${step.name}) failed ${stepState.attempts} times — requesting user intervention.\nSummary: ${summary}`,
+                { "--allow-empty": null }
+              );
+            } catch {
+              // Non-critical
+            }
+
+            return {
+              status: "escalated",
+              progress: renderProgressTable(state),
+              message: `Merge failed after ${stepState.attempts} attempts: ${mergeResult.error}`,
+              state,
+            };
           }
 
-          return {
-            status: "escalated",
-            progress: renderProgressTable(state),
-            message: `Merge failed after ${stepState.attempts} attempts: ${mergeResult.error}`,
-            state,
-          };
+          // Persist before every retry (persist-before-yield pattern, NFR 4)
+          // — a crash mid-retry resumes with accurate attempts/failures.
+          saveSprintState(projectSlug, sprint, state);
         }
-
-        // Retry the merge
-        saveSprintState(projectSlug, sprint, state);
-        continue;
-      }
+      } while (!mergeResult.success);
 
       // Merge succeeded
       stepState.attempts++;
@@ -1338,6 +1361,27 @@ export async function runSprintFromStep(
         state,
       };
     }
+  }
+
+  // C3 (AC #4): finalization guard — defense in depth beyond C1. The design
+  // invariant: state.status === "complete" implies EVERY step in state.steps
+  // is "complete". Pre-fix, this block set "complete" unconditionally — the
+  // Sprint 10 / Sprint 12 lie. Guard trips map to "escalated" (Open Question
+  // 3 ruling): resumable via the Sprint 10 escalated-resume path, never the
+  // Sprint 9 in-progress limbo. No [ESCALATE] commit here — upstream
+  // escalation paths already committed when they escalated; the guard's job
+  // is truthful status, not duplicate git noise. Guards report, never repair
+  // (architecture constraint 4).
+  const incompleteSteps = findIncompleteSteps(state.steps);
+  if (incompleteSteps.length > 0) {
+    state.status = "escalated";
+    saveSprintState(projectSlug, sprint, state);
+    return {
+      status: "escalated",
+      progress: renderProgressTable(state),
+      message: buildFinalizationGuardMessage(incompleteSteps),
+      state,
+    };
   }
 
   // All steps complete — generate sprint summary
@@ -1959,6 +2003,51 @@ function updateDodForCompletedStep(dod: DodChecklist, stepName: string): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Truthfulness guards (sprint-completes-despite-failed-merge, Sprint 13)
+// Pure, exported helpers backing the C3 finalization guard (AC #4) and the
+// C4 shared-step gate (AC #6). Guards report, never repair (constraint 4).
+// ---------------------------------------------------------------------------
+
+/**
+ * C3 (AC #4): the finalization-guard predicate. `state.status = "complete"`
+ * is reachable only when this returns []. Pure — never mutates.
+ */
+export function findIncompleteSteps(steps: StepState[]): StepState[] {
+  return steps.filter((s) => s.status !== "complete");
+}
+
+/**
+ * C3 (AC #4, NFR 6): guard-trip message — names every offending step by
+ * number, name, and status, and points at the resume path.
+ */
+export function buildFinalizationGuardMessage(incomplete: StepState[]): string {
+  const list = incomplete
+    .map((s) => `${s.step} (${s.name}, ${s.status})`)
+    .join(", ");
+  return `Sprint NOT complete: step(s) ${list} did not finish. Resume with resume_sprint.`;
+}
+
+/**
+ * C4 (AC #6): the shared-step-gate predicate. Shared steps 10–13 may begin
+ * only when this returns [] — every feature terminal ("complete" or
+ * "escalated") at its per-feature step 9. Pure — never mutates.
+ */
+export function findNonTerminalFeatures(features: FeatureState[]): FeatureState[] {
+  return features.filter(
+    (f) => f.status !== "complete" && f.status !== "escalated"
+  );
+}
+
+/**
+ * C4 (AC #6, NFR 6): gate-trip message — names every non-terminal feature
+ * and the step-9 boundary, and points at the resume path.
+ */
+export function buildSharedStepGateMessage(nonTerminal: FeatureState[]): string {
+  const slugs = nonTerminal.map((f) => f.slug).join(", ");
+  return `Shared steps blocked: feature(s) ${slugs} not terminal at step 9. Resume with resume_sprint.`;
+}
+
 /**
  * Multi-feature dispatcher: iterates state.features for steps 1–9 and runs
  * shared steps 10–13 once on top-level state.steps. Implements AC #3, #5, #6,
@@ -2035,8 +2124,22 @@ async function runMultiFeatureSprint(ctx: DispatchContext): Promise<SprintResult
         feature.branchName = featureBranchName(sprint, feature.slug);
 
         // Special handling for the Merge PR step: no agent, runs executeMerge.
+        // C2 (AC #5, #8): consume the outcome the pre-fix dispatcher
+        // discarded. On "retry", re-execute THIS feature's merge in place
+        // instead of advancing with its step 9 left in-progress. Termination
+        // inherited from runMergeStepForFeature: it increments attempts on
+        // every failure and returns "escalated" at the cap, so "retry" occurs
+        // at most MAX_RETRY_ATTEMPTS - 1 times per feature. Sibling isolation
+        // (AC #8) is structural: this loop closes over one feature/stepState
+        // pair. Do not add outcome variants without updating this loop
+        // (architecture API contract).
         if (step.name === "Merge PR") {
-          await runMergeStepForFeature(feature, featureStepState, ctx);
+          let outcome: "complete" | "escalated" | "retry";
+          do {
+            outcome = await runMergeStepForFeature(feature, featureStepState, ctx);
+          } while (outcome === "retry");
+          // "complete" and "escalated" both proceed to the next feature —
+          // existing park semantics (deriveSprintStatus below) unchanged.
           continue;
         }
 
@@ -2156,6 +2259,27 @@ async function runMultiFeatureSprint(ctx: DispatchContext): Promise<SprintResult
     }
 
     // --- Sprint-shared step (10–13) — run once on top-level state.steps ---
+
+    // C4 (AC #6): shared-step gate — defense in depth. Shared steps 10–13
+    // must not begin while any feature's terminal per-feature step (step 9)
+    // is neither "complete" nor "escalated". With C2 in place a feature can
+    // only exit the step-9 dispatch terminal; this gate closes the remaining
+    // in-progress-at-step-9 hole (deriveSprintStatus returns "in-progress"
+    // for that mix and the loop would otherwise continue into shared steps —
+    // the Sprint 9 unresumable limbo). Trips map to "escalated" (Open
+    // Question 3 ruling — resumable). No [ESCALATE] commit (constraint 4).
+    const nonTerminalFeatures = findNonTerminalFeatures(state.features);
+    if (nonTerminalFeatures.length > 0) {
+      state.status = "escalated";
+      saveSprintState(projectSlug, sprint, state);
+      return {
+        status: "escalated",
+        progress: renderProgressTable(state),
+        message: buildSharedStepGateMessage(nonTerminalFeatures),
+        state,
+      };
+    }
+
     const sharedStepState = state.steps[i];
     if (sharedStepState.status === "complete") continue;
 
@@ -2290,12 +2414,17 @@ async function runMergeStepForFeature(
   const mergeResult = await executeMerge(projectPath, feature.slug, sprint, branchName);
 
   if (!mergeResult.success) {
+    // C5 (additive): classification + signature persisted for post-mortems —
+    // retry behavior unchanged (architecture constraint 6).
+    const errorSummary = truncateErrorSummary(mergeResult.error || "Merge failed");
     stepState.attempts++;
     stepState.failures.push({
       attempt: stepState.attempts,
-      errorSummary: truncateErrorSummary(mergeResult.error || "Merge failed"),
+      errorSummary,
       timestamp: new Date().toISOString(),
       hadPartialArtifacts: false,
+      classification: classifyFailure(errorSummary),
+      signature: deriveFailureSignature(errorSummary),
     });
 
     if (stepState.attempts >= MAX_RETRY_ATTEMPTS) {
