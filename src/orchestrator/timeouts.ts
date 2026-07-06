@@ -2,6 +2,15 @@ export const MAX_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes cap
 export const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
+ * Absolute agent-runtime ceiling (CB-3, Architect ruling on Open Question 3):
+ * 60 min = 2 × MAX_TIMEOUT_MS. The resolved step timeout is the *idle window*
+ * (reset on stdout); this ceiling bounds total runtime of a continuously
+ * streaming agent and is never reset. MAX_TIMEOUT_MS is NOT raised — it still
+ * caps the idle window a user can configure.
+ */
+export const HARD_CEILING_MS = 60 * 60 * 1000; // 60 min absolute agent runtime ceiling
+
+/**
  * Built-in timeout defaults by step name.
  * QA test generation and engineer implementation get longer timeouts
  * because they produce significantly more output.

@@ -7,6 +7,11 @@ module.exports = {
     "<rootDir>/tests/**/*.test.ts",
   ],
   moduleFileExtensions: ["ts", "js", "json"],
+  // Make `import * as os from "os"` spyable (jest.spyOn(os, "homedir")) under
+  // esModuleInterop — see tests/helpers/os-shim.js for the full rationale.
+  moduleNameMapper: {
+    "^os$": "<rootDir>/tests/helpers/os-shim.js",
+  },
   testTimeout: 30000,
   transform: {
     "^.+\\.ts$": [

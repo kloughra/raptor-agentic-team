@@ -1,9 +1,15 @@
 import { spawn } from "child_process";
 import { Role } from "./workflow";
+import { HARD_CEILING_MS } from "./timeouts";
 
 export interface AgentResult {
   output: string;
   exitCode: number;
+  /**
+   * CB-3 (Sprint 12): which kill path terminated the agent, if any.
+   * Additive — undefined for normal exits and legacy callers.
+   */
+  killKind?: "idle" | "ceiling" | "buffer-overflow";
 }
 
 const AGENT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -240,17 +246,53 @@ export function spawnAgent(
     let bufferOverflow = false;
     let settled = false;
 
-    const timeout = setTimeout(() => {
+    // --- CB-3: idle timer + hard ceiling (replaces the one-shot wall-clock
+    // kill). The resolved step timeout is REINTERPRETED as an idle window:
+    // it resets on every stdout data chunk (the liveness signal, AC 10), so a
+    // continuously streaming agent is never killed by it. The hard ceiling is
+    // armed once at spawn and never reset — the sole defense against a
+    // never-idle agent streaming heartbeat garbage forever (AC 12).
+    const idleWindowMs = timeoutMs ?? AGENT_TIMEOUT_MS;
+
+    const killWith = (kind: "idle" | "ceiling", message: string) => {
       if (settled) return;
       settled = true;
+      clearTimeout(idleTimer);
+      clearTimeout(ceilingTimer);
       child.kill("SIGTERM");
-      const output = Buffer.concat(stdoutChunks).toString("utf-8")
-        || Buffer.concat(stderrChunks).toString("utf-8")
-        || `agent timed out after ${timeoutMs ?? AGENT_TIMEOUT_MS}ms`;
-      resolve({ output, exitCode: 1 });
-    }, timeoutMs ?? AGENT_TIMEOUT_MS);
+      // Buffered output captured so far is still preferred (existing
+      // behavior); the kill message is the output when the buffer is empty
+      // AND is appended as a suffix line when it is not, so the signature
+      // classes in failure-classification.ts always match (AC 11).
+      const buffered =
+        Buffer.concat(stdoutChunks).toString("utf-8") ||
+        Buffer.concat(stderrChunks).toString("utf-8");
+      const output = buffered ? `${buffered}\n${message}` : message;
+      resolve({ output, exitCode: 1, killKind: kind });
+    };
+
+    let idleTimer: NodeJS.Timeout = setTimeout(onIdle, idleWindowMs);
+    const ceilingTimer: NodeJS.Timeout = setTimeout(() => {
+      killWith(
+        "ceiling",
+        `agent killed at hard ceiling ${HARD_CEILING_MS}ms (still streaming — absolute runtime limit)`
+      );
+    }, HARD_CEILING_MS);
+
+    function onIdle(): void {
+      killWith("idle", `agent idle-killed after ${idleWindowMs}ms with no stdout output`);
+    }
+
+    function resetIdleTimer(): void {
+      if (settled) return;
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(onIdle, idleWindowMs);
+    }
 
     child.stdout?.on("data", (chunk: Buffer) => {
+      // stdout is the SOLE liveness signal (architecture constraint 9):
+      // stderr does not reset the idle timer.
+      resetIdleTimer();
       stdoutLen += chunk.length;
       if (stdoutLen > MAX_BUFFER_BYTES) {
         bufferOverflow = true;
@@ -273,20 +315,23 @@ export function spawnAgent(
     child.on("error", (err) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      clearTimeout(idleTimer);
+      clearTimeout(ceilingTimer);
       resolve({ output: err.message, exitCode: 1 });
     });
 
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      clearTimeout(idleTimer);
+      clearTimeout(ceilingTimer);
       const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
       const stderr = Buffer.concat(stderrChunks).toString("utf-8");
       if (bufferOverflow) {
         resolve({
           output: stdout || stderr || "agent output exceeded 10MB buffer",
           exitCode: 1,
+          killKind: "buffer-overflow",
         });
         return;
       }
