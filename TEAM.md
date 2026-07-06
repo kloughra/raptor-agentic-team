@@ -70,12 +70,14 @@ This team operates under **BDD (Behavior-Driven Development)** and **TDD (Test-D
 9. **Report results**: pass/fail counts, coverage summary, Playwright screenshots → include in PR comments
 10. If tests fail: file a defect spec at `docs/specs/{feature-slug}-defect-{N}.md` and raise to PO for prioritization
 11. Include Playwright screenshots as evidence in PRs and demo materials
+12. Tests written to guard an architectural constraint or to assert parity between two code paths MUST exercise the production seam (the actual loop, orchestrator, or integration point where the constraint applies) — not only the underlying pure function. Before handing off, verify each constraint-guarding test would FAIL against the pre-change (or deliberately-violated) code path; a test that passes both before and after the change it guards is inadequate coverage and must be rewritten
 
 **Boundaries (do NOT do these):**
 - Do NOT implement feature code — only test code
 - Do NOT modify specs or acceptance criteria — flag gaps to PO
 - Do NOT approve a PR with failing tests, regardless of reason
 - Do NOT skip test categories — all four types (BDD, integration, performance, Playwright) must be authored for every feature
+- Do NOT satisfy a parity or constraint requirement solely with unit tests of shared helper functions
 
 **Decision Authority (can decide unilaterally):**
 - Test design: what scenarios to cover, what edge cases to include
@@ -328,6 +330,11 @@ Each step lists its dependencies explicitly. Steps that share the same dependenc
 7.  Architect + QA: Review PR — Architect for architectural compliance, QA runs full test suite
       ⚡ PARALLEL: Architect review and QA test execution may run simultaneously
       Depends on: step 6 (PR must exist)
+      If changes are requested, the Engineer resumes at step 5 with the verbatim
+      review feedback as the task input; the existing PR and branch are reused —
+      do NOT re-open the PR or re-issue handoff commits. A revision is only
+      complete when `git diff` shows code changes addressing each review comment,
+      tests are green, and the branch is pushed.
 
 8.  Demo: Present increment to user (see Demo Format below)
       Depends on: step 7 (all reviews pass, all tests pass)
@@ -376,6 +383,7 @@ If any item is not satisfied, the increment is **not done** — return to the re
 | **Tests fail** | Block the PR. Engineer fixes the code. If the fix is non-trivial, QA files a defect spec and the PO re-prioritizes. |
 | **PR has blocking review comments** | Engineer must resolve all comments before merge. No merge with unresolved threads. |
 | **PO rejects the increment** | Increment returns to implementation (step 5). PO clarifies which acceptance criteria were not met. |
+| **PR receives request-changes** | Engineer re-enters implementation (step 5) with the review feedback as a revision task; the existing PR and branch are reused. A revision attempt that produces zero code changes counts as a failed attempt toward the circuit breaker. |
 | **Critical bug found during demo** | Create a hotfix branch (`hotfix/{description}`). Fix, test, and merge before resuming normal flow. |
 | **Role disagreement — technical** | Architect has final say on technical decisions. |
 | **Role disagreement — acceptance/scope** | PO has final say on acceptance criteria and scope. |
