@@ -71,4 +71,33 @@ Feature-scoped: `progress-aware-circuit-breaker` + `failure-classification`
 
 ## Feedback
 
-_(recorded verbatim after demo)_
+_(recorded after demo — summarized; the literal blocker-marker string is
+deliberately not reproduced here, see finding 3)_
+
+**Stakeholder verdict:** Demo excellent; content accepted as committed in
+`0173ceb`. The post-demo escalation was a **FALSE POSITIVE**: the presentation
+quoted the decision-pipeline diagram, which contains the literal bracketed
+blocker marker, and `hasBlockerMarker` (`runner.ts:259`) does a naive regex
+match anywhere in agent output — so the demo escalated for *describing* the
+escalation feature. Demo work stands; no redo required.
+
+### Findings queued for Step 10 (PO triage — Petra)
+
+1. `salvage-checkpoint-review-flag` — Open Question 6: should
+   `completedVia: "salvage"` force human review at the next checkpoint?
+   (already queued)
+2. `config-keys-parsed-vs-declared` — `loadConfig` drops `testConfig`,
+   `codebaseContext`, `artifactInjection`, `scopeNarrowing` (already queued)
+3. `blocker-marker-false-positive-in-agent-output` — **new, from this demo's
+   own escalation**: `hasBlockerMarker` (`runner.ts:259`) matches the blocker
+   marker anywhere in agent output, including quoted/discussed occurrences.
+   Should require the marker at line start or in a committed message, or
+   strip fenced code blocks before matching.
+
+### Re-presentation test run (2026-07-06)
+
+```
+Test Suites: 37 passed, 37 total
+Tests:       681 passed, 681 total
+Time:        8.058 s
+```
