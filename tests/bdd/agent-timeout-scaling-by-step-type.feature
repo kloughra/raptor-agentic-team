@@ -3,10 +3,12 @@ Feature: Agent Timeout Scaling by Step Type
   I want agent timeouts to scale based on step type
   So that complex steps get enough time to complete
 
-  Scenario: QA test generation gets 15 minute timeout
+  Scenario: QA test generation gets 30 minute timeout
+    # Raised from 15 min after sprint-11-write-tests-escalation: real QA runs
+    # took 13-19 min and the 15-min wall-clock cap killed a mid-write agent.
     Given the default timeout configuration
     When resolving timeout for step "Write tests"
-    Then the timeout is 900000ms (15 minutes)
+    Then the timeout is 1800000ms (30 minutes)
 
   Scenario: Engineer implementation gets 10 minute timeout
     Given the default timeout configuration
@@ -36,12 +38,12 @@ Feature: Agent Timeout Scaling by Step Type
   Scenario: Invalid timeout falls back to default
     Given config has timeouts.stepOverrides["Write tests"] = -1
     When resolving timeout for step "Write tests"
-    Then the built-in default of 900000ms is used
+    Then the built-in default of 1800000ms is used
 
   Scenario: Zero timeout falls back to default
     Given config has timeouts.stepOverrides["Write tests"] = 0
     When resolving timeout for step "Write tests"
-    Then the built-in default of 900000ms is used
+    Then the built-in default of 1800000ms is used
 
   Scenario: spawnAgent accepts optional timeout
     Given spawnAgent is called with timeoutMs = 900000

@@ -7,7 +7,7 @@ export const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
  * because they produce significantly more output.
  */
 export const STEP_TIMEOUT_DEFAULTS: Record<string, number> = {
-  "Write tests": 15 * 60 * 1000,           // 15 min — BDD + integration + performance tests
+  "Write tests": 30 * 60 * 1000,           // 30 min — BDD + integration + performance tests; observed 13–19 min real runs, 15-min cap killed Sprint 11's QA mid-write (see sprint-11-write-tests-escalation)
   "Implement (TDD)": 10 * 60 * 1000,       // 10 min — read artifacts + write code + run tests
   "Architecture design": 7 * 60 * 1000,    // 7 min — read spec + produce design doc
   "Collect retro proposals": 5 * 60 * 1000, // 5 min — 4 agents in sequence
