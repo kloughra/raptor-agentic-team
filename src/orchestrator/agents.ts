@@ -203,7 +203,8 @@ export function spawnAgent(
   context: string,
   taskDescription: string,
   cwd: string,
-  timeoutMs?: number
+  timeoutMs?: number,
+  model?: string
 ): Promise<AgentResult> {
   return new Promise((resolve) => {
     // The `--` end-of-options separator is load-bearing: claude CLI declares
@@ -216,7 +217,15 @@ export function spawnAgent(
     // exits with "Input must be provided either through stdin or as a prompt
     // argument when using --print". `--` makes this robust regardless of
     // ordering: everything after it is positional.
+    // adversarial-verifier-review-gate (Part 2, AC 5/6): when a per-role model
+    // is provided, insert `--model <value>` at the FRONT of the options block.
+    // This never disturbs the load-bearing tail — `--allowedTools` is still
+    // immediately followed only by the tool list, and `--` + the terminal
+    // `taskDescription` positional stay last. When `model` is undefined the
+    // spread contributes nothing, so the argv is byte-identical to today
+    // (no `--model` token anywhere) — the backward-compat guarantee (AC 5).
     const args = [
+      ...(model ? ["--model", model] : []),
       "--print",
       "--permission-mode",
       "acceptEdits",

@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { Role } from "./orchestrator/workflow";
 
 export interface RaptorConfig {
   projectsBaseDir: string;
@@ -9,6 +10,17 @@ export interface RaptorConfig {
   timeouts?: {
     default?: number;
     stepOverrides?: Record<string, number>;
+  };
+  /**
+   * Per-role model selection (adversarial-verifier-review-gate, Sprint 14 —
+   * Part 2). Lets the verifying roles (QA) run on a different `claude --model`
+   * than the generating role (Engineer). Absent key ⇒ default model everywhere
+   * (byte-identical to pre-feature behavior). Parsed in `loadConfig` — NOT
+   * merely declared — to avoid the `config-keys-parsed-vs-declared` defect.
+   */
+  models?: {
+    default?: string;
+    byRole?: Partial<Record<Role, string>>;
   };
   testConfig?: {
     framework?: string;
@@ -52,7 +64,55 @@ export function loadConfig(configPath: string): RaptorConfig {
     teamTemplatePath: parsed.teamTemplatePath ?? null,
     dinoNames: parsed.dinoNames ?? undefined,
     timeouts: parseTimeouts(parsed.timeouts),
+    models: parseModels(parsed.models),
   };
+}
+
+/** Valid role keys for `models.byRole` (mirrors the `Role` union). */
+const VALID_ROLES: readonly Role[] = ["po", "architect", "qa", "engineer", "team"];
+
+/**
+ * Parse the `models` key from config.json (adversarial-verifier-review-gate,
+ * Part 2 — AC 9). Structured exactly like `parseTimeouts`: type guards drop
+ * junk field-wise; a malformed `models` value (not an object, or an array) is
+ * ignored entirely. Absent key → `undefined` → `resolveRoleModel` returns
+ * `undefined` → `spawnAgent` called with no `--model` → argv byte-identical to
+ * today. `loadConfig` never throws on a bad `models` value.
+ */
+function parseModels(
+  raw: unknown
+): { default?: string; byRole?: Partial<Record<Role, string>> } | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+
+  const source = raw as Record<string, unknown>;
+  const result: { default?: string; byRole?: Partial<Record<Role, string>> } = {};
+
+  if (typeof source.default === "string" && source.default.length > 0) {
+    result.default = source.default;
+  }
+
+  if (
+    typeof source.byRole === "object" &&
+    source.byRole !== null &&
+    !Array.isArray(source.byRole)
+  ) {
+    const byRole: Partial<Record<Role, string>> = {};
+    for (const [role, value] of Object.entries(source.byRole)) {
+      // Unknown role keys and non-string values are dropped field-wise — a bad
+      // config never crashes the orchestrator.
+      if (
+        (VALID_ROLES as readonly string[]).includes(role) &&
+        typeof value === "string" &&
+        value.length > 0
+      ) {
+        byRole[role as Role] = value;
+      }
+    }
+    result.byRole = byRole;
+  }
+
+  return result;
 }
 
 /**
