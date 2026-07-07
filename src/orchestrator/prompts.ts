@@ -106,6 +106,59 @@ Walk through:
 5. Request feedback from the user`,
 };
 
+/**
+ * Adversarial-verifier gate instruction (adversarial-verifier-review-gate,
+ * Sprint 14 — Part 1, AC 1–4/17). Centralized here (not inlined in runner.ts)
+ * precisely so a test can assert its presence in the step-7 QA agent's prompt
+ * (AC 2). The runner appends this to the step-7 "Run test suite" QA task, so the
+ * enforcement is ORCHESTRATED — it takes effect for every sprint without a human
+ * having read TEAM.md.
+ *
+ * Content contract (pinned by the AC-1..4 tests):
+ *  - Act as an out-of-loop adversarial verifier.
+ *  - (a) Hunt for tests that reimplement/stub the system-under-test instead of
+ *        exercising the real production seam.
+ *  - (b) Confirm constraint-guarding tests carry a RED-verification note
+ *        (proven to fail pre-change), while NOT demanding one on ordinary tests.
+ *  - Bias toward the false-negative (reject suspicious-but-plausible work).
+ *  - On detecting either failure: flag/fail and surface it — never pass silently.
+ */
+export function buildAdversarialGateSection(): string {
+  return `--- Adversarial Verifier Review Gate ---
+You are acting as an OUT-OF-LOOP ADVERSARIAL VERIFIER for this review gate — not a
+collaborator trying to help the work pass, but a skeptic trying to prove it is
+false-green. A sprint must never report "all tests pass" when the tests secretly
+fail to exercise the real system.
+
+Carry out these checks against the production seams:
+
+(a) Reimplementation / stub hunt. Inspect the tests for any that REIMPLEMENT or
+    STUB the system-under-test instead of exercising the real production seam
+    (the actual orchestrator, runner, or integration point where the behavior
+    lives). A test that copies the logic it claims to verify, or asserts only
+    against a test-local mock of the code under test, is false coverage — flag it.
+
+(b) RED-verification note check. For every CONSTRAINT-GUARDING test — one that
+    pins an architectural constraint or asserts parity between two code paths —
+    confirm it carries a RED-verification note proving it was seen to FAIL
+    against the pre-change code. A constraint-guarding test with no evidence it
+    was proven to fail pre-change is inadequate coverage — flag it. Do NOT demand
+    a RED-verification note on ordinary happy-path tests; this requirement is
+    scoped to constraint-guarding tests only.
+
+Bias toward the FALSE-NEGATIVE. When work is suspicious-but-plausible, REJECT it
+rather than accept it. An agent can self-reflect on a falsely-failing test, but it
+cannot recover from a falsely-passing one — a wrongly-blocked-but-real test is
+cheap, a silently-accepted reimplementation is not.
+
+On detecting either failure (a test-local reimplementation, or a missing
+RED-verification note on a constraint-guarding test): FLAG and FAIL the review,
+and SURFACE the finding explicitly in your reported result. Never pass silently on
+a detected reimplementation or a missing RED note — a dropped finding is the exact
+false-green failure this gate exists to prevent.
+--- End Adversarial Verifier Review Gate ---`;
+}
+
 export function buildRolePrompt(role: Role, dinoNames?: Record<Role, DinoIdentity>): string {
   const names = dinoNames || resolveDinoNames();
   const preamble = buildDinoIdentityPreamble(role, names);

@@ -1,6 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 import simpleGit, { SimpleGit } from "simple-git";
+import { loadConfig, RaptorConfig } from "../config";
 import {
   SPRINT_WORKFLOW,
   HANDOFF_MAP,
@@ -20,7 +22,12 @@ import { resolveBacklogPath } from "../backlog-parser";
 import { matchExpectedOutput, describeRequiredOutput } from "./glob-match";
 import { renderProgressTable } from "./progress";
 import { buildCheckpointPrompt, CheckpointPrompt } from "./checkpoints";
-import { buildRolePrompt, buildStepContext, buildTeamMdContext } from "./prompts";
+import {
+  buildRolePrompt,
+  buildStepContext,
+  buildTeamMdContext,
+  buildAdversarialGateSection,
+} from "./prompts";
 import { spawnAgent } from "./agents";
 import { executeMerge, updatePrDodChecklist, MergeResult } from "./merge";
 import { generateSprintSummary, loadSprintSummaries } from "./summary";
@@ -62,6 +69,39 @@ import {
 export const MAX_RETRY_ATTEMPTS = 3;
 export const ERROR_SUMMARY_MAX_LENGTH = 500;
 export const RETRY_CONTEXT_MAX_LENGTH = 3000;
+
+/**
+ * Resolve the `claude --model` to use for a given role (adversarial-verifier-
+ * review-gate, Part 2 — AC 8/9/10). Per-role override wins, then the config
+ * default, else `undefined` (⇒ `spawnAgent` runs the default model, argv
+ * byte-identical to today). Pure; the resolved value is threaded to every
+ * `spawnAgent` call site so the verifying role (QA) can run on a different model
+ * than the generating role (Engineer) — the "generator ≠ verifier" separation.
+ */
+export function resolveRoleModel(role: Role, config: RaptorConfig): string | undefined {
+  return config.models?.byRole?.[role] ?? config.models?.default ?? undefined;
+}
+
+/**
+ * Best-effort load of the user's `~/.raptor/config.json` for model resolution.
+ * `loadConfig` returns defaults (no `models`) when the file is absent, so this
+ * never throws and yields byte-identical behavior when no models are configured.
+ */
+function loadRaptorConfig(): RaptorConfig {
+  return loadConfig(path.join(os.homedir(), ".raptor", "config.json"));
+}
+
+/**
+ * Part 1 (AC 1/2): append the adversarial-verifier instruction to the step-7
+ * QA "Run test suite" gate agent's context. Injected in orchestrator code (not
+ * TEAM.md), so it takes effect for every sprint. No-op for all other steps.
+ */
+function injectAdversarialGate(step: WorkflowStep, context: string): string {
+  if (step.role === "qa" && step.name === "Run test suite") {
+    return `${context}\n\n${buildAdversarialGateSection()}`;
+  }
+  return context;
+}
 
 export interface SprintResult {
   status: "checkpoint" | "complete" | "error" | "escalated";
@@ -735,6 +775,10 @@ export async function runSprintFromStep(
   // Load cross-sprint context for agent prompts
   const sprintSummaries = loadSprintSummaries(projectPath);
 
+  // Per-role model config (adversarial-verifier-review-gate, Part 2). Absent
+  // config ⇒ no models ⇒ every spawn runs the default model (byte-identical).
+  const config = loadRaptorConfig();
+
   // --- Multi-feature dispatch path ---
   if (isMultiFeature) {
     return await runMultiFeatureSprint({
@@ -749,6 +793,7 @@ export async function runSprintFromStep(
       testFramework,
       sprintSummaries,
       timeoutConfig,
+      config,
     });
   }
 
@@ -1003,6 +1048,10 @@ export async function runSprintFromStep(
       const systemPrompt = buildRolePrompt(step.role);
       let context = buildStepContext(step.step, projectPath, featureSlug);
 
+      // Part 1 (AC 1/2): inject the adversarial-verifier gate into the step-7
+      // QA "Run test suite" prompt (no-op for every other step).
+      context = injectAdversarialGate(step, context);
+
       // Layer 1: Inject TEAM.md so agents see the canonical process definition
       const teamMdContext = buildTeamMdContext(projectPath);
       if (teamMdContext) {
@@ -1128,7 +1177,9 @@ export async function runSprintFromStep(
       }
 
       // Spawn subagent with step-aware timeout (CB-5: user config now reaches
-      // the mechanism; the resolved value is the idle window — CB-3)
+      // the mechanism; the resolved value is the idle window — CB-3) and the
+      // per-role model (Part 2: generator ≠ verifier — AC 9/10). Undefined model
+      // ⇒ default `claude`, argv byte-identical to today.
       const stepTimeout = resolveStepTimeout(step.name, timeoutConfig);
       const result = await spawnAgent(
         step.role,
@@ -1136,7 +1187,8 @@ export async function runSprintFromStep(
         context,
         taskDesc,
         projectPath,
-        stepTimeout
+        stepTimeout,
+        resolveRoleModel(step.role, config)
       );
 
       // Check for [BLOCKER] — immediate escalation (highest priority,
@@ -1707,6 +1759,8 @@ interface DispatchContext {
   sprintSummaries: string | null;
   /** CB-5: user timeout config threaded to every resolveStepTimeout call. */
   timeoutConfig?: TimeoutConfig;
+  /** Part 2: RaptorConfig for per-role model resolution (resolveRoleModel). */
+  config: RaptorConfig;
 }
 
 type AgentStepOutcome =
@@ -1731,7 +1785,7 @@ export async function runAgentStepCycle(
   isMultiFeature: boolean,
   isFirstStepOfThisInvocation: boolean
 ): Promise<AgentStepOutcome> {
-  const { projectPath, projectSlug, sprint, state, feedback, sprintSummaries, testFramework, timeoutConfig } = ctx;
+  const { projectPath, projectSlug, sprint, state, feedback, sprintSummaries, testFramework, timeoutConfig, config } = ctx;
 
   // Progress-aware circuit breaker (CB-1/2/4): the loop is driven by the
   // RetryDecision pipeline via processFailureAndDecide — the SAME mechanism the
@@ -1755,6 +1809,10 @@ export async function runAgentStepCycle(
     // Build prompts and context
     const systemPrompt = buildRolePrompt(step.role);
     let context = buildStepContext(step.step, projectPath, featureSlug);
+
+    // Part 1 (AC 1/2): inject the adversarial-verifier gate into the step-7
+    // QA "Run test suite" prompt (no-op for every other step).
+    context = injectAdversarialGate(step, context);
 
     const teamMdContext = buildTeamMdContext(projectPath);
     if (teamMdContext) context = `${teamMdContext}\n\n${context}`;
@@ -1872,7 +1930,9 @@ export async function runAgentStepCycle(
     }
 
     // Spawn subagent with step-aware timeout (CB-5: user config now reaches
-    // the mechanism; the resolved value is the idle window — CB-3)
+    // the mechanism; the resolved value is the idle window — CB-3) and the
+    // per-role model (Part 2: generator ≠ verifier — AC 9/10). Undefined model
+    // ⇒ default `claude`, argv byte-identical to today.
     const stepTimeout = resolveStepTimeout(step.name, timeoutConfig);
     const result = await spawnAgent(
       step.role,
@@ -1880,7 +1940,8 @@ export async function runAgentStepCycle(
       context,
       taskDesc,
       projectPath,
-      stepTimeout
+      stepTimeout,
+      resolveRoleModel(step.role, config)
     );
 
     // [BLOCKER] — immediate escalation, handled ahead of the salvage/transient/
