@@ -70,7 +70,7 @@ This team operates under **BDD (Behavior-Driven Development)** and **TDD (Test-D
 9. **Report results**: pass/fail counts, coverage summary, Playwright screenshots → include in PR comments
 10. If tests fail: file a defect spec at `docs/specs/{feature-slug}-defect-{N}.md` and raise to PO for prioritization
 11. Include Playwright screenshots as evidence in PRs and demo materials
-12. Tests written to guard an architectural constraint or to assert parity between two code paths MUST exercise the production seam (the actual loop, orchestrator, or integration point where the constraint applies) — not only the underlying pure function. Before handing off, verify each constraint-guarding test would FAIL against the pre-change (or deliberately-violated) code path; a test that passes both before and after the change it guards is inadequate coverage and must be rewritten
+12. Tests written to guard an architectural constraint or to assert parity between two code paths MUST exercise the production seam (the actual loop, orchestrator, or integration point where the constraint applies) — not only the underlying pure function. Before handing off, verify each constraint-guarding test would FAIL against the pre-change (or deliberately-violated) code path; a test that passes both before and after the change it guards is inadequate coverage and must be rewritten. Each such test must carry a recorded **RED-verification note** — a comment in the test file (or linked PR note) stating exactly how it was proven to FAIL pre-change (e.g. "RED verified by reverting the dispatcher change / by hand-crafting invariant-violating state"). When the architecture defines a contract invariant (e.g. "outcomes.length === selected.length on EVERY path"), pin it on ALL paths including I/O-failure paths, not just happy paths *(Sprint 13 retro — QA)*
 
 **Boundaries (do NOT do these):**
 - Do NOT implement feature code — only test code
@@ -400,6 +400,8 @@ If any role has attempted the **same action 3 times** and it continues to fail (
 
 Do NOT continue retrying. The user will either provide guidance, adjust scope, or unblock the issue. This prevents infinite loops.
 
+**User-actionable failure fast-path** *(Sprint 13 retro — PO)*: If a failure is caused by a condition only the user can resolve — billing/spend limits, expired credentials, required manual approvals, or an external state change outside the repo — the role must NOT consume retry attempts. Escalate to the user immediately after the first occurrence with `[ESCALATE] {role}: user-actionable blocker — {condition}. Retrying cannot succeed until the user acts.` Additionally, when an external actor (typically the user) has already completed a workflow step out-of-band (e.g., a PR manually merged on GitHub), the role must verify the end state (code verifiably on main) and treat the step as successfully complete — not as a failure to retry.
+
 ---
 
 ## Cross-Review Expectations
@@ -460,6 +462,9 @@ Every PR must include:
 - [ ] Code committed and pushed
 - [ ] Peer review approved
 - [ ] PO accepted
+
+## RED Verification
+{list of constraint-guarding tests and how each was shown to fail pre-fix}
 ```
 
 ### Merge Policy
@@ -469,6 +474,7 @@ Every PR must include:
 - Squash-merge to keep history clean
 - Commit messages reference the feature spec or user story
 - No code merges without passing tests
+- Merge steps are **state-verifying, not action-verifying** *(Sprint 13 retro — Architect)*: if the merge action reports the PR is already merged (e.g., the user merged it manually on GitHub), verify the merge commit is reachable on `main` and treat the step as **success** — not a failure, and not an attempt counted toward the circuit breaker. More generally, any workflow step whose intended end state is already satisfied by external action (user, hotfix, prior run) is complete upon verification of that end state; the role posts `[STATUS] {role}: {step} — already satisfied externally, verified on main` and proceeds.
 
 ---
 
