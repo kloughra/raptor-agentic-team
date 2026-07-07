@@ -82,6 +82,30 @@ export interface SprintState {
   checkpoints: CheckpointState[];
   dod: DodChecklist;
   retroProposals: unknown[] | null;
+  /**
+   * Sprint 13 (retro-improvements-not-applied): per-proposal apply report
+   * from step 13 — additive and optional (backward-compatible; pre-existing
+   * state files load unchanged and absent retroApply renders no
+   * qualification line). Stored on SprintState (not StepState) because step
+   * 13 runs once per sprint in both dispatch modes and the report feeds the
+   * sprint-level result message. Absent when the retro selection was
+   * skip/empty/out-of-range (AC 7: skip behavior byte-identical to before).
+   */
+  retroApply?: {
+    applied: number;
+    fallback: number;
+    alreadyPresent: number;
+    unplaced: number;
+    outcomes: Array<{
+      role: string;
+      section: string;
+      placement: "applied" | "applied-fallback" | "already-present" | "unplaced";
+      placedAt?: string;
+      reason?: string;
+    }>;
+    /** AC 8: a caught apply-commit failure, surfaced instead of swallowed. */
+    commitError?: string;
+  };
   features?: FeatureState[] | null;
   /**
    * Multi-feature mode only: which feature is currently being dispatched.
