@@ -25,6 +25,7 @@ This team operates under **BDD (Behavior-Driven Development)** and **TDD (Test-D
 5. Accept or reject completed work against acceptance criteria
 6. **Gate the demo**: verify the Definition of Done checklist is fully satisfied before allowing demo to proceed; if any item fails, block the demo and return to the relevant workflow step
 7. Manage the user feedback loop: collect demo feedback verbatim, triage it, and convert it into updated or new specifications
+8. **Capture deferred items before sprint close** *(Sprint 14 retro — PO)*: any item explicitly deferred, spun off as a "follow-up," or recorded as a scoping/vacuous-by-design decision during the sprint — regardless of which role raised it or at which checkpoint — MUST be written into `docs/backlog.md` (Inbox for new work, Ready if already prioritized) with its source noted, before the demo/feedback step is marked complete. At the feedback-processing step, explicitly verify each deferral surfaced in spec Open Questions, ADR decisions, or checkpoint feedback has a corresponding backlog entry; a deferral that exists only in checkpoint feedback text is not considered captured.
 
 **Boundaries (do NOT do these):**
 - Do NOT write tests, code, or architecture documents
@@ -71,6 +72,7 @@ This team operates under **BDD (Behavior-Driven Development)** and **TDD (Test-D
 10. If tests fail: file a defect spec at `docs/specs/{feature-slug}-defect-{N}.md` and raise to PO for prioritization
 11. Include Playwright screenshots as evidence in PRs and demo materials
 12. Tests written to guard an architectural constraint or to assert parity between two code paths MUST exercise the production seam (the actual loop, orchestrator, or integration point where the constraint applies) — not only the underlying pure function. Before handing off, verify each constraint-guarding test would FAIL against the pre-change (or deliberately-violated) code path; a test that passes both before and after the change it guards is inadequate coverage and must be rewritten. Each such test must carry a recorded **RED-verification note** — a comment in the test file (or linked PR note) stating exactly how it was proven to FAIL pre-change (e.g. "RED verified by reverting the dispatcher change / by hand-crafting invariant-violating state"). When the architecture defines a contract invariant (e.g. "outcomes.length === selected.length on EVERY path"), pin it on ALL paths including I/O-failure paths, not just happy paths *(Sprint 13 retro — QA)*
+13. When a feature ships new behavior gated behind optional configuration whose contract is "absent config = prior behavior everywhere" (an inert-by-default capability), author an explicit **default-off parity test** proving the new code path is byte-identical to pre-change behavior when the config is unset — e.g. asserting the spawned argv / output is byte-for-byte the same with no config present. This test carries its own RED-verification note (proven to FAIL if the new plumbing leaks a default when config is absent) and must exercise the production seam end-to-end (config → loader → resolver → spawn), not just the parsing helper *(Sprint 14 retro — QA)*
 
 **Boundaries (do NOT do these):**
 - Do NOT implement feature code — only test code
@@ -327,9 +329,17 @@ Each step lists its dependencies explicitly. Steps that share the same dependenc
 6.  Engineers: Commit all code, push to feature branch, open PR (description must include test results, Playwright screenshots, and linked spec)
       Depends on: step 5 (implementation complete)
 
-7.  Architect + QA: Review PR — Architect for architectural compliance, QA runs full test suite
+7.  Architect + QA: Review PR — Architect for architectural compliance, QA runs full test suite; both apply the **adversarial verification pass** and record its outcome in the review *(Sprint 14 retro — Architect)*
       ⚡ PARALLEL: Architect review and QA test execution may run simultaneously
       Depends on: step 6 (PR must exist)
+      Adversarial verification pass (required sub-step, jointly owned): before
+      approving, the reviewer must (a) hunt for tests that reimplement production
+      logic or mock away the very seam the test claims to guard, flagging any
+      found as blocking; (b) confirm every constraint-guarding or parity test
+      carries a recorded RED-verification note; (c) surface the outcome
+      explicitly in the review report (e.g. "adversarial pass: 0 reimplementations
+      found, all RED notes present"). A PR may not be approved until this pass is
+      stated as run and clean.
       If changes are requested, the Engineer resumes at step 5 with the verbatim
       review feedback as the task input; the existing PR and branch are reused —
       do NOT re-open the PR or re-issue handoff commits. A revision is only
@@ -668,3 +678,7 @@ Examples:
 - When completing a workflow step
 - When blocked
 - When unblocked and resuming
+
+### Marker Literals & False-Positive Safety *(Sprint 14 retro — Engineer)*
+
+When an agent's commit message, PR body, or status/report output *discusses* a control marker rather than *raising* one — e.g. describing an adversarial-gate outcome, referencing the blocker/escalate/handoff markers in prose, or documenting the protocol — it MUST NOT emit the literal bracketed token. Refer to it in escaped or paraphrased form instead (e.g. "a blocker marker", the word in backticks, or the token with internal spaces). Only emit an unescaped bracketed marker when actually triggering that control path. Rationale: `src/git-parser.ts` extracts these tokens by literal string match, so any incidental occurrence is indistinguishable from a real event (observed live: false-positive escalations in the Sprint 12 demo and Sprint 14 step 6).
