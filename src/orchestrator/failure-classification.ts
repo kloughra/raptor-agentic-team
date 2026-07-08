@@ -11,7 +11,10 @@ import * as os from "os";
  * re-derives with drifted logic against old text.
  */
 
-export type FailureClassification = "transient" | "deterministic";
+export type FailureClassification =
+  | "transient"
+  | "deterministic"
+  | "user-actionable";
 
 /** Transient retry cap per step (Architect ruling, spec AC 7). */
 export const TRANSIENT_RETRY_CAP = 5;
@@ -37,16 +40,86 @@ export const TRANSIENT_ERROR_PATTERNS: RegExp[] = [
 ];
 
 /**
- * Classify a failure's error summary as transient (infra-level, does not
- * consume a circuit-breaker attempt slot) or deterministic (today's slot
- * accounting). Deterministic is the default (AC 9 backward compat is handled
- * at read sites via `?? "deterministic"`).
+ * A user-actionable failure pattern (Sprint 15, user-actionable-failure-class).
+ *
+ * Unlike TRANSIENT_ERROR_PATTERNS (a bare `RegExp[]`), each user-actionable
+ * entry carries the concrete `action` the user must take, so the escalation
+ * message and the matched pattern cannot drift (spec AC 7 / architecture
+ * §Technology Choices #2).
+ */
+export interface UserActionablePattern {
+  /** Regex tested against the error summary. No /g flag (constraint 13). */
+  pattern: RegExp;
+  /** Concrete remediation named in the escalation detail (AC 7). */
+  action: string;
+}
+
+/**
+ * User-actionable (blocker-is-outside-the-sprint) error patterns. Code-only
+ * registry (spec AC 3 / architecture §Constraints — NOT user-configurable via
+ * config.json, mirroring TRANSIENT_ERROR_PATTERNS). Exported so tests can
+ * enumerate it. Adding a future signature is a one-line addition with no
+ * pipeline change.
+ *
+ * No /g flags: a stateful lastIndex would make classification non-deterministic
+ * (constraint 13). Registry ORDER is significant — `resolveUserAction` returns
+ * the FIRST match (Open Question 3 ruling: billing before invalid-model).
+ */
+export const USER_ACTIONABLE_ERROR_PATTERNS: UserActionablePattern[] = [
+  {
+    // billing / spend-limit — specimen "You've hit your monthly spend limit"
+    // (commits 908bf63, 9394bdd, f9bc035). Generalized to tolerate phrasing
+    // drift ("monthly spend limit" / "usage limit") per the Edge Case, without
+    // over-fitting one exact string.
+    pattern: /spend limit|(?:monthly|daily)?\s*(?:spend|usage) limit|usage limit reached/i,
+    action:
+      "Raise your usage limit at https://claude.ai/settings/usage, then resume the sprint.",
+  },
+  {
+    // invalid-model — the `claude` CLI rejects an unknown `--model` at spawn
+    // (Sprint 14 models-plumbing surface). Broad enough to catch the real
+    // specimen; the exact CLI string is an empirical unknown (spec Open
+    // Question 2) — this seed matches the documented candidate phrasings.
+    pattern:
+      /(?:unknown|invalid|unrecognized|unsupported)\b[^\n]{0,20}\bmodel|model\b[^\n]{0,40}(?:not found|not recognized|does not exist|is invalid)/i,
+    action:
+      "Fix models.byRole / models.default in ~/.raptor/config.json (invalid --model), then resume the sprint.",
+  },
+];
+
+/**
+ * Classify a failure's error summary. Precedence (Open Question 1 ruling —
+ * architecture §Constraints): user-actionable → transient → deterministic.
+ * User-actionable is checked FIRST so an ambiguous string (e.g. a usage-limit
+ * phrasing that also brushes a transient rate-limit pattern) resolves to
+ * escalate-now rather than retry-loop — retrying a spend-limit error as if it
+ * were a network flake is the exact waste this feature removes.
+ *
+ * Deterministic remains the default (AC 9 backward compat is handled at read
+ * sites via `?? "deterministic"`).
  */
 export function classifyFailure(errorSummary: string): FailureClassification {
+  for (const { pattern } of USER_ACTIONABLE_ERROR_PATTERNS) {
+    if (pattern.test(errorSummary)) return "user-actionable";
+  }
   for (const pattern of TRANSIENT_ERROR_PATTERNS) {
     if (pattern.test(errorSummary)) return "transient";
   }
   return "deterministic";
+}
+
+/**
+ * Resolve the concrete user action for a user-actionable failure (spec AC 7).
+ * Returns the `action` of the FIRST matching user-actionable pattern (registry
+ * order — billing before invalid-model, Open Question 3), or `null` when no
+ * user-actionable pattern matches. Used by the escalate pipeline to build the
+ * actionable escalation detail. Pure, deterministic, no /g.
+ */
+export function resolveUserAction(errorSummary: string): string | null {
+  for (const { pattern, action } of USER_ACTIONABLE_ERROR_PATTERNS) {
+    if (pattern.test(errorSummary)) return action;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
