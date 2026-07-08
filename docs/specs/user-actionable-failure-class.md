@@ -35,9 +35,10 @@ Both were filed as follow-ups (`billing-error-signature-class`, `invalid-model-s
 
 3. **Extensible pattern registry.** User-actionable patterns live in an exported, code-only registry mirroring `TRANSIENT_ERROR_PATTERNS` (enumerable by tests, NOT user-configurable via `config.json` — out of scope, same as the transient registry). Adding a future user-actionable signature is a one-line registry addition with no pipeline change.
 
-4. **Ships with two seed patterns.** The registry ships with at least these two signatures:
+4. **Ships with one seed pattern (revised post-review).** The registry ships with at least this signature:
    - **billing / spend-limit** — matches the spend-limit error (minimum specimen: "You've hit your monthly spend limit"; commits `908bf63`, `9394bdd`, `f9bc035`).
-   - **invalid-model** — matches the `claude` CLI's unknown-`--model` rejection at spawn (the Sprint 14 `models`-plumbing failure surface).
+
+   > **Invalid-model deferred (post-review scope cut).** The originally-planned second seed (invalid `--model`) is **not shipped** this sprint. Empirical finding (2026-07-07): `claude --model bogus-xyz --print hi` emits its advisory — "There's an issue with the selected model (bogus-xyz). It may not exist or you may not have access to it. Run --model to pick a different model." — to **STDOUT** and **exits 0**. Because the process exits 0, `spawnAgent` returns success; the step then fails on **missing outputs**, and the string `classifyFailure` sees is "Agent completed (exit 0) but did not create required output files" — never the model advisory. No `failure-classification.ts` regex can ever fire on that path. Detecting invalid-model therefore requires inspection of the **exit-0 / agent-output path** (`agents.ts` or the exit-0 branch of `runAgentStepCycle`), a distinct design — tracked as Inbox item `invalid-model-user-actionable-detection`. A speculative "invalid model" regex here would be dead code that could only mis-escalate deterministic failures whose output merely mentions an unsupported model.
 
 5. **Escalate after exactly one attempt.** When a step's failure classifies `user-actionable`, `decideAfterFailure` returns an `escalate` decision on the **first** attempt — before a second agent spawn. It does not wait for `MAX_RETRY_ATTEMPTS` (deterministic), the 2-attempt no-progress short-circuit, or `TRANSIENT_RETRY_CAP` (transient). Zero additional attempts are spent.
 

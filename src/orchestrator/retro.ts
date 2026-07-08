@@ -211,7 +211,7 @@ export function applyImprovements(
 
   for (const proposal of proposals) {
     const lines = content.split("\n");
-    const heading = findHeadingLine(lines, proposal.section);
+    const heading = resolveHeadingLine(lines, proposal.section);
 
     if (heading) {
       const block = renderTargetBlock(proposal);
@@ -395,6 +395,162 @@ function findHeadingLine(lines: string[], section: string): HeadingLine | null {
     }
   }
   return null;
+}
+
+// ─── Segment-and-match resolver ────────────────────────────────────────────
+// Sprint 15 (retro-section-matching-rarely-hits-target). Open Question 1 →
+// option (b): apply-side only. `resolveHeadingLine` runs the existing
+// normalized-exact matcher FIRST (byte-identical fast path), then a
+// segment-and-match pass that lets a compound/descriptive Section string
+// resolve to the real TEAM.md heading it references. When nothing resolves it
+// returns null and the unchanged Sprint 13 fallback fires (AC 4 — precision
+// over recall; a well-attributed fallback beats a confident-but-wrong
+// placement). Deterministic, string-only, no model call (AC 5).
+
+/** Extracted real heading candidate (fence-aware). */
+interface RealHeading {
+  lineIdx: number;
+  level: number;
+  /** verbatim heading text (hashes stripped) → recorded in placedAt */
+  text: string;
+  /** core match tokens (trailing parenthetical stripped, lowercased) */
+  core: string[];
+  /** 0-based document order among non-fenced headings */
+  docIdx: number;
+}
+
+/**
+ * Strip a heading's TRAILING parenthetical qualifier when computing core tokens
+ * (Architect ruling, Open Question 3): `Product Owner (PO)` → `Product Owner`;
+ * `Software Engineer(s)` → `Software Engineer`. Only a final `(...)` group at
+ * end-of-string is treated as an optional qualifier — a mid-string parenthetical
+ * is left in place.
+ */
+function stripTrailingParenthetical(text: string): string {
+  return text.replace(/\s*\([^)]*\)\s*$/, "").trim();
+}
+
+/**
+ * Whole-word tokenization: lowercase, then split on any run of non-alphanumeric
+ * characters. `&`, `(`, `)`, `-`, and whitespace all delimit. Empty tokens
+ * dropped. Whole-token equality is what kills substring false positives —
+ * `architect` never equals the token `architecture` (AC 4).
+ */
+function tokenizeWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 0);
+}
+
+/**
+ * Fence-aware scan producing the candidate heading index in document order.
+ * Headings inside fenced code blocks are excluded (AC 6 — reuses the same
+ * `isFenceLine` toggle as `findHeadingLine` / `findSectionEndLine`).
+ */
+function extractRealHeadings(lines: string[]): RealHeading[] {
+  const out: RealHeading[] = [];
+  let inFence = false;
+  let docIdx = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (isFenceLine(lines[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = lines[i].match(/^(#{1,6})\s+(.*)$/);
+    if (!m) continue;
+    const text = m[2].trim();
+    const core = tokenizeWords(stripTrailingParenthetical(text));
+    if (core.length === 0) continue; // parenthetical-only heading → un-matchable
+    out.push({ lineIdx: i, level: m[1].length, text, core, docIdx: docIdx++ });
+  }
+  return out;
+}
+
+/**
+ * Split a free-text Section into segments on STRONG separators only. Arrow
+ * forms (`→` / `->` / `=>` / `»` / `▸`) are normalized to `;` first, then the
+ * string is split on `; : , / | >` and newlines. `-` and `&` are DELIBERATELY
+ * NOT separators — they appear inside legitimate headings (`Roles &
+ * Responsibilities`, `Multi-Engineer Coordination`, `Cross-Review
+ * Expectations`), so splitting on them would shred a real heading (AC 4
+ * no-shred edge case).
+ */
+function segmentSection(section: string): string[] {
+  return section
+    .replace(/→|->|=>|»|▸/g, ";")
+    .split(/[;:,/|>\n]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * True when `needle` appears as a contiguous whole-token subsequence of `hay`.
+ * An empty needle never matches (guards against matching everything).
+ */
+function isContiguousSubsequence(hay: string[], needle: string[]): boolean {
+  if (needle.length === 0 || needle.length > hay.length) return false;
+  for (let i = 0; i + needle.length <= hay.length; i++) {
+    let ok = true;
+    for (let j = 0; j < needle.length; j++) {
+      if (hay[i + j] !== needle[j]) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return true;
+  }
+  return false;
+}
+
+/**
+ * Resolve a free-text Section to a real TEAM.md heading. Returns the same
+ * `HeadingLine | null` shape as `findHeadingLine`, so `applyImprovements` is
+ * unchanged apart from its single call-site swap.
+ *
+ * Pipeline:
+ *   1. Exact fast path — `findHeadingLine` (unchanged). A verbatim heading
+ *      resolves byte-identically to pre-feature behavior.
+ *   2. Segment the Section on strong separators; tokenize each segment.
+ *   3. A heading is a candidate when its core token sequence is a contiguous
+ *      whole-token subsequence of a single segment (first matching segment).
+ *   4. Deterministic winner: longest match ↓, deepest level ↓, earliest
+ *      segment ↑, document order ↑ (Architect tie-break ruling, Open Q 2).
+ *   5. No candidate → null → caller falls back (AC 4).
+ */
+function resolveHeadingLine(lines: string[], section: string): HeadingLine | null {
+  // 1. Exact fast path — byte-identical to the pre-feature matcher.
+  const exact = findHeadingLine(lines, section);
+  if (exact) return exact;
+
+  // 2. Segment-and-match.
+  const segmentTokens = segmentSection(section).map(tokenizeWords);
+  if (segmentTokens.length === 0) return null;
+
+  const headings = extractRealHeadings(lines);
+  const candidates: Array<{ heading: RealHeading; matchLen: number; segIdx: number }> = [];
+
+  for (const h of headings) {
+    for (let s = 0; s < segmentTokens.length; s++) {
+      if (isContiguousSubsequence(segmentTokens[s], h.core)) {
+        candidates.push({ heading: h, matchLen: h.core.length, segIdx: s });
+        break; // earliest matching segment for this heading
+      }
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  // 4. Deterministic total-order winner.
+  candidates.sort((a, b) => {
+    if (b.matchLen !== a.matchLen) return b.matchLen - a.matchLen; // longest match
+    if (b.heading.level !== a.heading.level) return b.heading.level - a.heading.level; // deepest
+    if (a.segIdx !== b.segIdx) return a.segIdx - b.segIdx; // earliest segment
+    return a.heading.docIdx - b.heading.docIdx; // document order
+  });
+
+  const winner = candidates[0].heading;
+  return { lineIdx: winner.lineIdx, level: winner.level, text: winner.text };
 }
 
 /**
