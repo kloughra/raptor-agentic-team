@@ -193,7 +193,6 @@ describe("buildMultiFeatureEscalatedMessage", () => {
 
 const IMPLEMENT_STEP = SPRINT_WORKFLOW.find((s) => s.step === 5)!;
 const BILLING = "You've hit your monthly spend limit";
-const INVALID_MODEL = "unknown model: definitely-not-a-real-model-xyz";
 
 function userActionableStepState(errorSummary: string, stepNum = 5): StepState {
   return {
@@ -230,17 +229,6 @@ describe("buildSingleFeatureEscalationMessage — user-actionable seam (AC 7)", 
     expect(msg).toMatch(/action required/i);
     expect(msg).not.toMatch(/transient cap/i);
     expect(msg).not.toMatch(/no progress/i);
-  });
-
-  it("names the invalid-model action (models config in ~/.raptor/config.json)", () => {
-    const msg = buildSingleFeatureEscalationMessage(
-      IMPLEMENT_STEP,
-      "user-actionable",
-      userActionableStepState(INVALID_MODEL),
-      "Fix models.byRole / models.default in ~/.raptor/config.json (invalid --model), then resume the sprint."
-    );
-    expect(msg).toContain("~/.raptor/config.json");
-    expect(msg).not.toMatch(/transient cap/i);
   });
 
   it("re-resolves the action from the last failure when no detail is threaded", () => {

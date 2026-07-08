@@ -11,33 +11,39 @@
  * `decideAfterFailure` pipeline in `runner.ts`. They are RED until the Engineer
  * implements — the expected state at step 3.
  *
+ * SCOPE (post-review): Sprint 15 ships ONE seed pattern — billing / spend-limit.
+ * The invalid-model seed was cut before merge. Empirically, `claude --model
+ * bogus-xyz --print hi` prints its advisory ("There's an issue with the selected
+ * model (bogus-xyz). It may not exist or you may not have access to it. …") to
+ * STDOUT and EXITS 0 — so `spawnAgent` returns success, the step then fails on
+ * MISSING OUTPUTS, and the string `classifyFailure` sees is "Agent completed
+ * (exit 0) but did not create required output files" — never the model advisory.
+ * No `USER_ACTIONABLE_ERROR_PATTERNS` regex can fire on that path. Invalid-model
+ * detection needs the exit-0/agent-output inspection path and is deferred to
+ * Inbox item `invalid-model-user-actionable-detection`; these tests therefore
+ * cover the billing class only.
+ *
  * ─── RED-VERIFICATION (TEAM.md QA rule 12) ──────────────────────────────────
  * Every constraint-guarding test below is proven to FAIL against the current
- * (pre-change) pipeline, where these errors classify `deterministic`:
+ * (pre-change) pipeline, where a spend-limit error classifies `deterministic`:
  *   - The classification tests fail because `classifyFailure` returns
- *     `"deterministic"` for a spend-limit / invalid-model string today
+ *     `"deterministic"` for a spend-limit string today
  *     (`failure-classification.ts:45` walks only TRANSIENT_ERROR_PATTERNS).
  *   - `USER_ACTIONABLE_ERROR_PATTERNS` and `resolveUserAction` do not exist yet,
  *     so the imports below are a compile-time RED signal.
  *   - The `decideAfterFailure` escalate-now tests fail because today a
  *     user-actionable string takes the deterministic path: a billing error
  *     burns 2 attempts (CB-1 no-progress short-circuit on the identical
- *     signature) and an invalid-model error burns up to 3 (attempts-exhausted).
- *     The `runRetryLoop` harness below drives the REAL classify + decide seam
- *     and counts attempts against the actual counter (not a mock); pre-change it
- *     returns 2 / 3, post-change it must return 1.
+ *     signature). The `runRetryLoop` harness below drives the REAL classify +
+ *     decide seam and counts attempts against the actual counter (not a mock);
+ *     pre-change it returns 2, post-change it must return 1.
  * How to re-verify RED: `git stash` the Engineer's change (or revert
  * failure-classification.ts + runner.ts) and re-run — every `it` in the
  * "user-actionable" describe blocks must fail.
  *
- * Surfaces intentionally NOT covered here: the exact stderr specimen the
- * `claude` CLI emits on an unknown `--model` (spec Open Question 2) is an
- * empirical unknown the Engineer must confirm against the live CLI and tune the
- * seed regex to; these tests assert the DOCUMENTED broad-regex candidates
- * (architecture §Components) so they pin the contract without over-fitting one
- * exact string. The escalation-message rendering at the two runner escalate
- * seams is covered by colocated runner unit tests; here we pin the pure
- * `decideAfterFailure` detail + `resolveUserAction`.
+ * The escalation-message rendering at the two runner escalate seams is covered
+ * by colocated runner unit tests; here we pin the pure `decideAfterFailure`
+ * detail + `resolveUserAction`.
  */
 
 import * as fs from "fs";
@@ -62,11 +68,11 @@ import { loadSprintState, FailureRecord, StepState } from "../../src/orchestrato
 
 const SLUG = "user-actionable-failure-class";
 
-// Documented seed specimens (spec AC 4). The billing minimum specimen is exact
-// (commits 908bf63, 9394bdd, f9bc035); the invalid-model candidates match the
-// architecture's broad first-cut regex pending Open Question 2 confirmation.
+// Documented seed specimen (spec AC 4). The billing minimum specimen is exact
+// (commits 908bf63, 9394bdd, f9bc035). The invalid-model seed was cut pre-merge
+// (see file header) — an unknown-model advisory can never reach classifyFailure.
 const BILLING_SPECIMEN = "You've hit your monthly spend limit";
-const INVALID_MODEL_SPECIMEN = "unknown model: definitely-not-a-real-model-xyz";
+const INVALID_MODEL_ADVISORY = "unknown model: definitely-not-a-real-model-xyz";
 
 // ---------------------------------------------------------------------------
 // Test builders (mirrors the progress-aware-circuit-breaker seam builders)
@@ -192,15 +198,12 @@ describe("classifyFailure — user-actionable class (AC 1-4)", () => {
     expect(classifyFailure(msg)).toBe("user-actionable");
   });
 
-  it.each([
-    "unknown model: definitely-not-a-real-model-xyz",
-    "error: invalid model name provided",
-    "unrecognized model requested",
-    "model definitely-not-a-real-model does not exist",
-    "the requested model is invalid",
-    "model claude-bogus not found",
-  ])("invalid-model rejection classifies user-actionable: %s", (msg) => {
-    expect(classifyFailure(msg)).toBe("user-actionable");
+  it("an unknown-model advisory does NOT classify user-actionable (invalid-model deferred)", () => {
+    // The claude CLI exits 0 on an unknown --model, so this advisory can never
+    // reach classifyFailure via a real failure. Shipping a pattern for it would
+    // only mis-escalate deterministic failures that mention a model. Deferred to
+    // Inbox item `invalid-model-user-actionable-detection`.
+    expect(classifyFailure(INVALID_MODEL_ADVISORY)).not.toBe("user-actionable");
   });
 
   it("a user-actionable failure is NOT transient and NOT deterministic (observable contract, AC 2)", () => {
@@ -230,9 +233,9 @@ describe("classifyFailure — user-actionable class (AC 1-4)", () => {
 // ===========================================================================
 
 describe("USER_ACTIONABLE_ERROR_PATTERNS registry (AC 3, 4, 13)", () => {
-  it("is an enumerable code-only array of at least two seed entries", () => {
+  it("is an enumerable code-only array of at least one seed entry", () => {
     expect(Array.isArray(USER_ACTIONABLE_ERROR_PATTERNS)).toBe(true);
-    expect(USER_ACTIONABLE_ERROR_PATTERNS.length).toBeGreaterThanOrEqual(2);
+    expect(USER_ACTIONABLE_ERROR_PATTERNS.length).toBeGreaterThanOrEqual(1);
   });
 
   it("every entry carries a RegExp pattern and a non-empty action string, no /g flag (AC 13)", () => {
@@ -251,10 +254,10 @@ describe("USER_ACTIONABLE_ERROR_PATTERNS registry (AC 3, 4, 13)", () => {
     ).toBe(true);
   });
 
-  it("ships an invalid-model seed matching the unknown-model rejection (AC 4)", () => {
+  it("does NOT ship an invalid-model seed (cut pre-merge — cannot fire on exit-0 CLI path)", () => {
     expect(
-      USER_ACTIONABLE_ERROR_PATTERNS.some((e) => e.pattern.test(INVALID_MODEL_SPECIMEN))
-    ).toBe(true);
+      USER_ACTIONABLE_ERROR_PATTERNS.some((e) => e.pattern.test(INVALID_MODEL_ADVISORY))
+    ).toBe(false);
   });
 });
 
@@ -269,24 +272,11 @@ describe("resolveUserAction (AC 7)", () => {
     expect(action!.toLowerCase()).toContain("claude.ai/settings/usage");
   });
 
-  it("names fixing models config for an invalid-model failure", () => {
-    const action = resolveUserAction(INVALID_MODEL_SPECIMEN);
-    expect(action).not.toBeNull();
-    expect(action!).toContain("~/.raptor/config.json");
-    expect(action!.toLowerCase()).toMatch(/models\.(byrole|default)/);
-  });
-
   it("returns null when no user-actionable pattern matches", () => {
     expect(resolveUserAction("agent produced no output")).toBeNull();
     expect(resolveUserAction("socket connection closed unexpectedly")).toBeNull();
-  });
-
-  it("first-match-wins on a multi-match summary (registry order: billing before invalid-model, Open Question 3)", () => {
-    const both = `${BILLING_SPECIMEN}. Also: ${INVALID_MODEL_SPECIMEN}`;
-    const action = resolveUserAction(both);
-    expect(action).not.toBeNull();
-    // Billing is the first registry entry, so its action is named.
-    expect(action!.toLowerCase()).toContain("claude.ai/settings/usage");
+    // Unknown-model advisory is not user-actionable this sprint (deferred).
+    expect(resolveUserAction(INVALID_MODEL_ADVISORY)).toBeNull();
   });
 });
 
@@ -305,12 +295,6 @@ describe("decideAfterFailure — user-actionable escalate-now (AC 5-8)", () => {
     const state = stepStateWith([classifiedFailure(BILLING_SPECIMEN)], 1);
     const esc = asEscalate(decideAfterFailure(state, lastFailure(state), NO_SALVAGE));
     expect(esc.detail.toLowerCase()).toContain("claude.ai/settings/usage");
-  });
-
-  it("the escalation detail names the concrete invalid-model action (AC 7)", () => {
-    const state = stepStateWith([classifiedFailure(INVALID_MODEL_SPECIMEN)], 1);
-    const esc = asEscalate(decideAfterFailure(state, lastFailure(state), NO_SALVAGE));
-    expect(esc.detail).toContain("~/.raptor/config.json");
   });
 
   it("does NOT wait for the transient cap, no-progress short-circuit, or MAX_RETRY_ATTEMPTS (AC 5)", () => {
@@ -351,13 +335,6 @@ describe("decideAfterFailure — user-actionable escalate-now (AC 5-8)", () => {
 describe("attempt accounting at the production seam (AC 11)", () => {
   it("a billing error escalates after exactly 1 attempt (pre-change: burns 2 via no-progress short-circuit)", () => {
     const { decision, attemptsSpent } = runRetryLoop(BILLING_SPECIMEN);
-    expect(attemptsSpent).toBe(1);
-    expect(decision).not.toBeNull();
-    expect(asEscalate(decision!).reason).toBe("user-actionable");
-  });
-
-  it("an invalid-model error escalates after exactly 1 attempt (pre-change: burns up to 3)", () => {
-    const { decision, attemptsSpent } = runRetryLoop(INVALID_MODEL_SPECIMEN);
     expect(attemptsSpent).toBe(1);
     expect(decision).not.toBeNull();
     expect(asEscalate(decision!).reason).toBe("user-actionable");

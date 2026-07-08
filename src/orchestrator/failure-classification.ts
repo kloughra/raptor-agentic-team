@@ -63,7 +63,21 @@ export interface UserActionablePattern {
  *
  * No /g flags: a stateful lastIndex would make classification non-deterministic
  * (constraint 13). Registry ORDER is significant — `resolveUserAction` returns
- * the FIRST match (Open Question 3 ruling: billing before invalid-model).
+ * the FIRST match.
+ *
+ * Sprint 15 ships EXACTLY ONE seed pattern (billing / spend-limit). An
+ * invalid-model seed was cut before merge: the `claude` CLI does NOT fail on an
+ * unknown `--model` — it prints an advisory to STDOUT ("There's an issue with
+ * the selected model (…). It may not exist or you may not have access to it.")
+ * and EXITS 0. `spawnAgent` therefore returns success, the step then fails on
+ * MISSING OUTPUTS, and the string `classifyFailure` sees is "Agent completed
+ * (exit 0) but did not create required output files" — never the model advisory.
+ * No regex in THIS registry can ever fire on that path, and a broad "invalid
+ * model" pattern would mis-escalate any deterministic failure whose output
+ * merely mentions an unsupported model (e.g. while working on the models feature
+ * itself). Detecting invalid-model needs work in the exit-0 / agent-output
+ * inspection path (agents.ts / the exit-0 branch of `runAgentStepCycle`), not
+ * here — tracked as Inbox item `invalid-model-user-actionable-detection`.
  */
 export const USER_ACTIONABLE_ERROR_PATTERNS: UserActionablePattern[] = [
   {
@@ -74,16 +88,6 @@ export const USER_ACTIONABLE_ERROR_PATTERNS: UserActionablePattern[] = [
     pattern: /spend limit|(?:monthly|daily)?\s*(?:spend|usage) limit|usage limit reached/i,
     action:
       "Raise your usage limit at https://claude.ai/settings/usage, then resume the sprint.",
-  },
-  {
-    // invalid-model — the `claude` CLI rejects an unknown `--model` at spawn
-    // (Sprint 14 models-plumbing surface). Broad enough to catch the real
-    // specimen; the exact CLI string is an empirical unknown (spec Open
-    // Question 2) — this seed matches the documented candidate phrasings.
-    pattern:
-      /(?:unknown|invalid|unrecognized|unsupported)\b[^\n]{0,20}\bmodel|model\b[^\n]{0,40}(?:not found|not recognized|does not exist|is invalid)/i,
-    action:
-      "Fix models.byRole / models.default in ~/.raptor/config.json (invalid --model), then resume the sprint.",
   },
 ];
 
@@ -111,9 +115,9 @@ export function classifyFailure(errorSummary: string): FailureClassification {
 /**
  * Resolve the concrete user action for a user-actionable failure (spec AC 7).
  * Returns the `action` of the FIRST matching user-actionable pattern (registry
- * order — billing before invalid-model, Open Question 3), or `null` when no
- * user-actionable pattern matches. Used by the escalate pipeline to build the
- * actionable escalation detail. Pure, deterministic, no /g.
+ * order), or `null` when no user-actionable pattern matches. Used by the
+ * escalate pipeline to build the actionable escalation detail. Pure,
+ * deterministic, no /g.
  */
 export function resolveUserAction(errorSummary: string): string | null {
   for (const { pattern, action } of USER_ACTIONABLE_ERROR_PATTERNS) {

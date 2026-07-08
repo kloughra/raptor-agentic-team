@@ -663,8 +663,8 @@ export function buildMultiFeatureEscalatedMessage(
  * 12 — parity asserted at the seam, mirroring `buildMultiFeatureEscalatedMessage`).
  *
  * For a `user-actionable` escalation it names the concrete action the user must
- * take (spend limit → claude.ai/settings/usage; invalid-model → models config)
- * instead of the generic "escalated (transient cap)" arm, which previously
+ * take (spend limit → claude.ai/settings/usage) instead of the generic
+ * "escalated (transient cap)" arm, which previously
  * MISLABELED any non-exhausted reason. `attempts-exhausted` and the
  * no-progress/transient-cap arms are byte-for-byte unchanged (AC 12).
  */

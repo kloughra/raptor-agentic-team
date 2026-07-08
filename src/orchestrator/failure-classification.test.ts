@@ -77,11 +77,19 @@ describe("classifyFailure", () => {
 // ===========================================================================
 // Sprint 15 — user-actionable-failure-class (colocated units)
 //
+// SCOPE (post-review): Sprint 15 ships ONE seed pattern — billing / spend-limit.
+// The invalid-model seed was cut before merge: the `claude` CLI prints its
+// unknown-`--model` advisory to STDOUT and EXITS 0, so `spawnAgent` returns
+// success and the string `classifyFailure` ever sees is the missing-outputs
+// message — never the model advisory. No registry regex could fire on that
+// path. Invalid-model detection needs the exit-0/agent-output inspection path
+// and is deferred to Inbox item `invalid-model-user-actionable-detection`.
+//
 // RED-VERIFICATION (TEAM.md QA rule 12): every `it` below FAILS against the
 // pre-change classifier. classifyFailure returned only "transient" |
-// "deterministic", so a spend-limit / invalid-model string classified
-// "deterministic"; USER_ACTIONABLE_ERROR_PATTERNS and resolveUserAction did
-// not exist (compile-time RED). Re-verify by reverting failure-classification.ts.
+// "deterministic", so a spend-limit string classified "deterministic";
+// USER_ACTIONABLE_ERROR_PATTERNS and resolveUserAction did not exist
+// (compile-time RED). Re-verify by reverting failure-classification.ts.
 // ===========================================================================
 
 describe("classifyFailure — user-actionable class (Sprint 15, AC 1-4, 13)", () => {
@@ -95,17 +103,6 @@ describe("classifyFailure — user-actionable class (Sprint 15, AC 1-4, 13)", ()
     "monthly usage limit reached",
     "usage limit reached — please raise your limit",
   ])("billing phrasing drift → user-actionable: %s", (msg) => {
-    expect(classifyFailure(msg)).toBe("user-actionable");
-  });
-
-  it.each([
-    "unknown model: definitely-not-a-real-model-xyz",
-    "error: invalid model name provided",
-    "unrecognized model requested",
-    "model definitely-not-a-real-model does not exist",
-    "the requested model is invalid",
-    "model claude-bogus not found",
-  ])("invalid-model rejection → user-actionable: %s", (msg) => {
     expect(classifyFailure(msg)).toBe("user-actionable");
   });
 
@@ -132,9 +129,9 @@ describe("classifyFailure — user-actionable class (Sprint 15, AC 1-4, 13)", ()
 });
 
 describe("USER_ACTIONABLE_ERROR_PATTERNS registry (Sprint 15, AC 3, 4, 13)", () => {
-  it("is an enumerable, code-only array of at least two seed entries", () => {
+  it("is an enumerable, code-only array of at least one seed entry", () => {
     expect(Array.isArray(USER_ACTIONABLE_ERROR_PATTERNS)).toBe(true);
-    expect(USER_ACTIONABLE_ERROR_PATTERNS.length).toBeGreaterThanOrEqual(2);
+    expect(USER_ACTIONABLE_ERROR_PATTERNS.length).toBeGreaterThanOrEqual(1);
   });
 
   it("every entry carries a RegExp pattern and a non-empty action, no /g flag (AC 13)", () => {
@@ -146,13 +143,21 @@ describe("USER_ACTIONABLE_ERROR_PATTERNS registry (Sprint 15, AC 3, 4, 13)", () 
     }
   });
 
-  it("ships a billing seed and an invalid-model seed (AC 4)", () => {
+  it("ships the billing seed (AC 4)", () => {
     expect(
       USER_ACTIONABLE_ERROR_PATTERNS.some((e) => e.pattern.test("You've hit your monthly spend limit"))
     ).toBe(true);
+  });
+
+  it("does NOT ship an invalid-model seed (cut pre-merge — cannot fire on the exit-0 CLI path)", () => {
+    // Guards against reintroducing a pattern that classifyFailure can never see:
+    // the claude CLI exits 0 on an unknown --model, so the error string is the
+    // missing-outputs message, not a model advisory. See registry comment.
     expect(
-      USER_ACTIONABLE_ERROR_PATTERNS.some((e) => e.pattern.test("unknown model: definitely-not-a-real-model-xyz"))
-    ).toBe(true);
+      USER_ACTIONABLE_ERROR_PATTERNS.some((e) =>
+        e.pattern.test("unknown model: definitely-not-a-real-model-xyz")
+      )
+    ).toBe(false);
   });
 });
 
@@ -163,21 +168,11 @@ describe("resolveUserAction (Sprint 15, AC 7)", () => {
     expect(action!.toLowerCase()).toContain("claude.ai/settings/usage");
   });
 
-  it("names fixing models config for an invalid-model failure", () => {
-    const action = resolveUserAction("unknown model: definitely-not-a-real-model-xyz");
-    expect(action).not.toBeNull();
-    expect(action!).toContain("~/.raptor/config.json");
-    expect(action!.toLowerCase()).toMatch(/models\.(byrole|default)/);
-  });
-
   it("returns null when no user-actionable pattern matches", () => {
     expect(resolveUserAction("agent produced no output")).toBeNull();
     expect(resolveUserAction("socket connection closed unexpectedly")).toBeNull();
-  });
-
-  it("first-match-wins on a multi-match summary (billing before invalid-model, OQ3)", () => {
-    const both = "You've hit your monthly spend limit. Also: unknown model: bogus";
-    expect(resolveUserAction(both)!.toLowerCase()).toContain("claude.ai/settings/usage");
+    // An unknown-model advisory is NOT user-actionable this sprint (deferred).
+    expect(resolveUserAction("unknown model: definitely-not-a-real-model-xyz")).toBeNull();
   });
 });
 

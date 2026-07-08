@@ -1,6 +1,6 @@
 Feature: User-Actionable Failure Classification
   As a Raptor user running a sprint
-  I want a failure whose blocker is outside the sprint (spend limit hit, invalid --model)
+  I want a failure whose blocker is outside the sprint (spend limit hit)
   to escalate immediately after the first attempt with the exact action I must take
   So that Raptor never burns 2-3 doomed retries on a blocker no retry can fix
 
@@ -9,6 +9,14 @@ Feature: User-Actionable Failure Classification
   # Decision ordering (binding): salvage-complete > USER-ACTIONABLE (escalate-now)
   #   > transient > no-progress short-circuit > deterministic slot accounting
   # Precedence inside classifyFailure: user-actionable > transient > deterministic
+  #
+  # SCOPE (post-review): Sprint 15 ships ONE seed pattern — billing / spend-limit.
+  # The invalid-model seed was cut before merge: `claude --model bogus --print`
+  # prints its advisory to STDOUT and EXITS 0, so spawnAgent returns success and
+  # the string the classifier sees is the missing-outputs message, never a model
+  # advisory — no registry regex can fire on that path. Invalid-model detection
+  # needs the exit-0/agent-output inspection path and is deferred to Inbox item
+  # `invalid-model-user-actionable-detection`.
 
   Background:
     Given a Raptor sprint is running with the standard 13-step workflow
@@ -37,16 +45,12 @@ Feature: User-Actionable Failure Classification
       | monthly usage limit              |
       | usage limit reached              |
 
-  Scenario Outline: An invalid --model rejection classifies as user-actionable
-    When an agent attempt fails with output containing "<error>"
-    Then the failure is classified "user-actionable"
-
-    Examples:
-      | error                                   |
-      | error: invalid model name provided      |
-      | unknown model: definitely-not-a-real-model |
-      | model definitely-not-a-real-model not found |
-      | the requested model does not exist      |
+  Scenario: An unknown-model advisory does NOT classify as user-actionable (invalid-model deferred)
+    # The claude CLI exits 0 on an unknown --model, so this text never reaches the
+    # classifier as a real failure; shipping a pattern for it would only mis-escalate
+    # deterministic failures that mention a model. Deferred to a separate Inbox item.
+    When an agent attempt fails with output containing "unknown model: definitely-not-a-real-model"
+    Then the failure is NOT classified "user-actionable"
 
   Scenario: An error matching no user-actionable pattern classifies exactly as today
     When an agent attempt fails with "agent produced no output"
@@ -56,7 +60,7 @@ Feature: User-Actionable Failure Classification
 
   Scenario: The user-actionable registry is an enumerable, code-only, pattern+action registry
     Given the exported USER_ACTIONABLE_ERROR_PATTERNS registry
-    Then it is an array of at least two entries
+    Then it is an array of at least one entry
     And every entry carries a RegExp pattern and a non-empty action string
     And no entry's pattern uses the /g flag
     And adding a future signature is a one-line registry addition with no pipeline change
@@ -89,23 +93,11 @@ Feature: User-Actionable Failure Classification
     And the escalation reason is "user-actionable"
     # RED baseline: pre-change this billing error classifies deterministic and burns 2 attempts
 
-  Scenario: An invalid-model failure escalates after exactly one attempt, not three
-    Given the retry loop runs a step whose agent fails with "unknown model: definitely-not-a-real-model"
-    When the loop processes the failure
-    Then the step escalates after exactly 1 attempt
-    And the escalation reason is "user-actionable"
-    # RED baseline: pre-change an invalid-model error rides the deterministic path and burns up to 3 attempts
-
   Scenario: The escalation message names the concrete action for a spend-limit failure
     Given a step failed with a user-actionable spend-limit error
     When the escalation decision is produced
     Then the escalation detail names raising the usage limit at claude.ai/settings/usage
     And a user reading it can act without guessing
-
-  Scenario: The escalation message names the concrete action for an invalid-model failure
-    Given a step failed with a user-actionable invalid-model error
-    When the escalation decision is produced
-    Then the escalation detail names fixing models.byRole / models.default in ~/.raptor/config.json
 
   # ---------------------------------------------------------------------------
   # Ordering & edge cases
@@ -123,11 +115,6 @@ Feature: User-Actionable Failure Classification
     When the step then fails with a user-actionable spend-limit error
     Then the runner escalates immediately with reason "user-actionable"
     And it does NOT finish the remaining deterministic attempt budget
-
-  Scenario: Both seed patterns present in one summary names the first-matched action
-    When an agent attempt fails with output containing both a spend-limit message and a model complaint
-    Then the failure classifies "user-actionable"
-    And the escalation names at least the first-matched action
 
   # ---------------------------------------------------------------------------
   # No-regression parity (AC 12)
