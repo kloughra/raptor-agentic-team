@@ -134,10 +134,15 @@ Feature: Retro section matching resolves compound Section strings to their real 
   # AC 6 — Fenced headings stay non-matchable
   # ───────────────────────────────────────────────────────────────────────────
 
+  # NOTE (PO test-review CHANGES REQUESTED): the Section must reference ONLY
+  # fenced headings, else it accidentally matches the real non-fenced
+  # "### PR Description Template". Both "## Test Results" and "## Linked Spec"
+  # live inside the PR-template code fence, so the sole reason for fallback is
+  # the fence.
   @ac6 @fences
   Scenario: A compound Section cannot resolve to a heading living inside a code fence
-    Given an adopted proposal whose Section is "PR Description Template → Linked Spec"
-    And "## Linked Spec" appears in TEAM.md only inside the fenced PR Description Template
+    Given an adopted proposal whose Section is "Test Results → Linked Spec"
+    And both "## Test Results" and "## Linked Spec" appear in TEAM.md only inside the fenced PR Description Template
     When step 13 "Apply retro improvements" executes
     Then the improvement is NOT inserted inside the fenced code block
     And the proposal's outcome is "applied-fallback"

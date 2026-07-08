@@ -142,12 +142,20 @@ const P_PROSE_ARCH: RetroProposal = {
 };
 
 // AC 6 fenced-only heading, embedded in a compound Section → still fallback.
+// NOTE (PO test-review CHANGES REQUESTED, docs/specs/retro-section-matching-
+// rarely-hits-target-test-review.md): the original Section
+// "PR Description Template → Linked Spec" accidentally referenced a REAL
+// non-fenced heading `### PR Description Template` (template/TEAM.md:410), which
+// a correct resolver applies (not fallback) — the fixture no longer isolated
+// fence behavior. Per the PO's specified fix, every segment now points ONLY at
+// a fenced heading: both `## Test Results` and `## Linked Spec` live inside the
+// PR-template code fence, so the sole reason for fallback is the fence.
 const P_FENCED_COMPOUND: RetroProposal = {
   role: "architect",
-  section: "PR Description Template → Linked Spec",
+  section: "Test Results → Linked Spec",
   type: "modification",
   proposal: "FENCED-COMPOUND-MARKER: link the architecture doc in every PR.",
-  rationale: "`## Linked Spec` exists only inside a code fence.",
+  rationale: "Both `## Test Results` and `## Linked Spec` exist only inside a code fence.",
   impact: "Fenced headings stay non-matchable.",
 };
 
