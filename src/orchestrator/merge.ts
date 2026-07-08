@@ -52,12 +52,42 @@ async function detectGitHubPR(cwd: string): Promise<number | null> {
 
 /**
  * Merge a PR via GitHub's `gh` CLI.
+ *
+ * push-before-merge (Sprint 15, C1): before invoking `gh pr merge`, push the
+ * feature branch to its remote counterpart so the squash-merge includes any
+ * local-only commits (demo/retro/handoff) that would otherwise be invisible to
+ * the merge — the Sprint 12 root-cause divergence. The push is a normal,
+ * NON-forced push of exactly one refspec (`origin <branchName>`):
+ *   - No --force / --force-with-lease — a genuine divergence fails the push and
+ *     escalates; remote history is never rewritten (AC #5).
+ *   - Explicit remote + single positional refspec — never --all/--tags/--mirror,
+ *     so `main`/the default branch can never be pushed by this call (AC #10/OQ3),
+ *     and it is upstream-agnostic (works whether or not tracking is configured,
+ *     OQ2/C2).
+ * A push failure returns a structured `success: false` with a push-named error
+ * and does NOT proceed to `gh pr merge` (AC #2, #8, #9); `executeMerge` still
+ * never throws. This function is only reached on the open-PR path, so
+ * already-merged / PR-closed / local-fallback paths never push (AC #4/#6/#7).
  */
 async function mergeViaGitHub(
   cwd: string,
   featureSlug: string,
-  sprint: number
+  sprint: number,
+  branchName: string
 ): Promise<MergeResult> {
+  // C1: pre-merge push (never-forced, single refspec). Wrapped so executeMerge
+  // never throws (AC #2). On failure, return before touching `gh pr merge`.
+  try {
+    await simpleGit(cwd).push(["origin", branchName]);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      method: "github",
+      error: `Pre-merge push of branch '${branchName}' failed: ${msg}`,
+    };
+  }
+
   return new Promise((resolve) => {
     const body = `Sprint ${sprint}: ${featureSlug}\n\nSquash-merged by Raptor orchestrator`;
     execFile(
@@ -155,8 +185,8 @@ export async function executeMerge(
       };
     }
 
-    // Open PR — merge via GitHub
-    return mergeViaGitHub(projectPath, featureSlug, sprint);
+    // Open PR — merge via GitHub (pre-merge push runs at the head of mergeViaGitHub)
+    return mergeViaGitHub(projectPath, featureSlug, sprint, branchName);
   }
 
   // No GitHub PR — fall back to local git merge
