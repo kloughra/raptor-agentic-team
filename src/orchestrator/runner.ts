@@ -29,6 +29,7 @@ import {
   buildAdversarialGateSection,
 } from "./prompts";
 import { spawnAgent } from "./agents";
+import { hasBlockerMarker } from "./blocker-marker";
 import { executeMerge, updatePrDodChecklist, MergeResult } from "./merge";
 import { generateSprintSummary, loadSprintSummaries } from "./summary";
 import {
@@ -293,13 +294,6 @@ function buildRetryContext(
   }
 
   return sections.join("\n");
-}
-
-/**
- * Detect if agent output contains a [BLOCKER] marker.
- */
-function hasBlockerMarker(output: string): boolean {
-  return /\[blocker\]/i.test(output);
 }
 
 /**
