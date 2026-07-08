@@ -1,68 +1,77 @@
 # Sprint 15 — Test Results
 
-**Feature:** push-before-merge
-**QA:** Vex (QA Engineer)
-**Date:** 2026-07-07
-**Command:** `npx jest` (full suite: unit + integration)
+> Multi-feature sprint: each feature's QA step recorded its suite result on its own
+> branch. Counts below are per-feature-branch snapshots (taken before the sibling
+> features merged), retained on merge rather than fabricating a combined total.
 
-## Summary
+---
+
+## Feature: push-before-merge
+
+**QA:** Vex (QA Engineer) · **Date:** 2026-07-07 · **Command:** `npx jest`
 
 | Metric | Result |
 |--------|--------|
 | Test Suites | **46 passed**, 46 total |
 | Tests | **795 passed**, 795 total |
 | Failures | 0 |
-| Snapshots | 0 |
-| Wall time | ~12.4 s |
 
-✅ **All tests pass — the PR meets the "all tests pass" Definition of Done gate.**
+✅ All tests pass — meets the "all tests pass" DoD gate.
 
-(+15 tests over Sprint 14's 780; +2 suites reflecting the new feature-scoped
-integration + BDD coverage.)
+### Feature-scoped coverage
+`tests/integration/push-before-merge.integration.test.ts` — **10 passed**. Every
+constraint-guarding test drives the **real** `executeMerge` (and, for retry
+accounting, the **real** `runSprintFromStep` step-9 loop) against real git repos
+with real bare remotes via `simple-git`. Mocking confined to the sanctioned
+boundaries (`gh` CLI via `execFile`; `spawnAgent` on the runner-seam test only).
+`executeMerge` is never mocked — it is the system under test.
 
-## Feature-scoped coverage — push-before-merge
+RED-verification (TEAM.md QA rule 12): AC #1/#10, #2/#8/#9, #5, #3 carry in-file
+RED notes proving each was seen to FAIL against pre-change `executeMerge`
+(reverting the pre-merge push in `mergeViaGitHub`). The open-PR push is
+unconditional (no gating config), so rule-13 default-off parity does not apply;
+the analog is the push-free assertions on the unchanged non-open-PR paths.
 
-`tests/integration/push-before-merge.integration.test.ts` — **10 passed**, 10 total.
+---
 
-Every constraint-guarding test drives the **real** `executeMerge` (and, for the
-retry-accounting test, the **real** `runSprintFromStep` step-9 loop) against
-**real** git repositories with **real** bare remotes via `simple-git`. Mocking is
-confined to the two architecture-sanctioned boundaries — `child_process.execFile`
-(the `gh` CLI only; `spawn` is passed through so simple-git performs real pushes)
-and `spawnAgent` (runner-seam test only, so shared steps 10–13 don't spawn real
-`claude`). `executeMerge` is never mocked — it is the system under test.
+## Feature: user-actionable-failure-class
 
-| AC | Scenario | RED note |
-|----|----------|----------|
-| #1, #10 | Pushes local-only commits to the remote before `gh pr merge` | [RED:A] revert C1 → remote stays behind → assert fails |
-| edge | Already-in-sync branch pushes as no-op, merges normally | no-regression |
-| #2, #8, #9 | Failing push → `success:false`, `gh pr merge` never invoked | [RED:B] |
-| #8 | Push-failure error names "push" and the branch | [RED:B] |
-| #2 | Never-throws contract on push failure | no-regression |
-| #5 | Remote-ahead divergence fails cleanly, no force, remote history intact | [RED:C] |
-| #4 | No-GitHub-PR → local fallback, no push attempted | no-regression |
-| #6 | Already-merged PR short-circuits without pushing | no-regression |
-| #7 | Closed-without-merge PR returns failure without pushing | no-regression |
-| #3 | Push failure feeds the existing step-9 retry/escalation loop; escalates after `MAX_RETRY_ATTEMPTS`, never merging, never running shared steps | [RED:S] |
+**QA:** Vex (QA Engineer) · **Date:** 2026-07-07 · **Command:** `npx jest`
 
-**RED-verification (TEAM.md QA rule 12):** the constraint-guarding tests carry
-in-file RED notes proving how each was seen to FAIL against pre-change
-`executeMerge` (reverting the pre-merge push in `mergeViaGitHub`). The no-regression
-tests assert the non-open-PR paths never push and pass before and after. The
-feature is unconditional on the open-PR path (no gating config), so TEAM.md QA
-rule 13's default-off parity test does not apply — the closest analog is the
-push-free assertions on the unchanged paths.
+| Metric | Result |
+|--------|--------|
+| Test Suites | **45 passed**, 45 total |
+| Tests | **827 passed**, 827 total |
+| Failures | 0 |
+
+✅ All tests pass — meets the "all tests pass" DoD gate.
+
+### Feature-scoped coverage
+`src/orchestrator/failure-classification.test.ts` (unit) +
+`tests/integration/user-actionable-failure-class.integration.test.ts` — **74 passed**.
+
+1. **New `user-actionable` classification** — billing/spend-limit specimens classify
+   as `user-actionable` (AC 1–4), distinct from `transient` and `deterministic`.
+2. **Escalate-after-1-attempt** — `decideAfterFailure` short-circuits without burning
+   the retry budget, asserted against the runner's exact attempt-accounting (AC 11).
+3. **Scoping guard** — the `invalid-model` advisory can never reach `classifyFailure`
+   via a real failure path (it exits 0 on the CLI), so no pattern is shipped for it;
+   a negative test pins this and the case is deferred to Inbox
+   `invalid-model-user-actionable-detection`.
+
+Production-seam / anti-false-green verification (rule 12): the integration suite
+imports the **real** `classifyFailure` / `decideAfterFailure` / `loadSprintState`
+— no test-local reimplementation. Constraint-guarding tests carry RED-verification
+notes; the adversarial-verifier gate checks (reimplementation hunt + RED-note
+presence) both pass.
+
+---
 
 ## Regression status
 
-No regressions. All 46 suites — including the Sprint 12/13/14 lineage
+No regressions in either feature branch. The Sprint 12/13/14 lineage
 (`progress-aware-circuit-breaker`, `sprint-completes-despite-failed-merge`,
 `retro-improvements-not-applied`, `orchestrator-recovery-after-mixed-completion`,
-`adversarial-verifier-review-gate`) — remain green. `merge.test.ts` and
-`sprint-completes-despite-failed-merge.test.ts` (the executeMerge lineage most
-affected by the `mergeViaGitHub` change) both pass.
-
-## Verdict
-
-Full suite green (795/795). No failing tests → no defect specs filed. PR clears
-the QA test-execution gate for Sprint 15 step 7.
+`adversarial-verifier-review-gate`) remained green on both branches. The
+authoritative post-merge suite count is whatever `npm test` reports on `main`
+after both features land.

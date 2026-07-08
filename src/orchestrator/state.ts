@@ -12,8 +12,11 @@ export interface FailureRecord {
    * CB-2 (Sprint 12): recorded at write time. Absent (older sprints) reads
    * as "deterministic" via the `??` convention (AC 9) — no loadSprintState
    * defaulting (architecture constraint 5).
+   *
+   * Sprint 15 (user-actionable-failure-class): third member added additively.
+   * Old records without a classification still read as "deterministic".
    */
-  classification?: "transient" | "deterministic";
+  classification?: "transient" | "deterministic" | "user-actionable";
   /**
    * CB-1 (Sprint 12): deterministic signature persisted at record time.
    * An old record without a signature never matches anything (constraint 4).
@@ -39,8 +42,16 @@ export interface StepState {
   failures: FailureRecord[];
   /** CB-4 (Sprint 12): absent ⇒ "agent" (AC 15). */
   completedVia?: "agent" | "salvage";
-  /** CB-1/CB-2 (Sprint 12): why the step escalated (AC 4, AC 7). */
-  escalationReason?: "attempts-exhausted" | "no-progress" | "transient-cap";
+  /**
+   * CB-1/CB-2 (Sprint 12): why the step escalated (AC 4, AC 7).
+   * Sprint 15 (user-actionable-failure-class): "user-actionable" added
+   * additively for escalate-now failures whose blocker is outside the sprint.
+   */
+  escalationReason?:
+    | "attempts-exhausted"
+    | "no-progress"
+    | "transient-cap"
+    | "user-actionable";
 }
 
 export interface CheckpointState {

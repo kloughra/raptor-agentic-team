@@ -15,9 +15,12 @@ import { describe, it, expect } from "@jest/globals";
 import {
   classifyFailure,
   deriveFailureSignature,
+  resolveUserAction,
   TRANSIENT_ERROR_PATTERNS,
   TRANSIENT_RETRY_CAP,
   TRANSIENT_RETRY_DELAY_MS,
+  USER_ACTIONABLE_ERROR_PATTERNS,
+  UserActionablePattern,
 } from "./failure-classification";
 
 describe("classifyFailure", () => {
@@ -68,6 +71,108 @@ describe("classifyFailure", () => {
   it("pins the Architect-ruled constants (cap 5, fixed 15s delay)", () => {
     expect(TRANSIENT_RETRY_CAP).toBe(5);
     expect(TRANSIENT_RETRY_DELAY_MS).toBe(15_000);
+  });
+});
+
+// ===========================================================================
+// Sprint 15 — user-actionable-failure-class (colocated units)
+//
+// SCOPE (post-review): Sprint 15 ships ONE seed pattern — billing / spend-limit.
+// The invalid-model seed was cut before merge: the `claude` CLI prints its
+// unknown-`--model` advisory to STDOUT and EXITS 0, so `spawnAgent` returns
+// success and the string `classifyFailure` ever sees is the missing-outputs
+// message — never the model advisory. No registry regex could fire on that
+// path. Invalid-model detection needs the exit-0/agent-output inspection path
+// and is deferred to Inbox item `invalid-model-user-actionable-detection`.
+//
+// RED-VERIFICATION (TEAM.md QA rule 12): every `it` below FAILS against the
+// pre-change classifier. classifyFailure returned only "transient" |
+// "deterministic", so a spend-limit string classified "deterministic";
+// USER_ACTIONABLE_ERROR_PATTERNS and resolveUserAction did not exist
+// (compile-time RED). Re-verify by reverting failure-classification.ts.
+// ===========================================================================
+
+describe("classifyFailure — user-actionable class (Sprint 15, AC 1-4, 13)", () => {
+  it("classifies the billing spend-limit specimen as user-actionable", () => {
+    expect(classifyFailure("You've hit your monthly spend limit")).toBe("user-actionable");
+  });
+
+  it.each([
+    "You've hit your monthly spend limit",
+    "Error: monthly spend limit exceeded for this account",
+    "monthly usage limit reached",
+    "usage limit reached — please raise your limit",
+  ])("billing phrasing drift → user-actionable: %s", (msg) => {
+    expect(classifyFailure(msg)).toBe("user-actionable");
+  });
+
+  it("a user-actionable failure is NOT transient and NOT deterministic (AC 2)", () => {
+    const cls = classifyFailure("You've hit your monthly spend limit");
+    expect(cls).not.toBe("transient");
+    expect(cls).not.toBe("deterministic");
+  });
+
+  it("precedence: matches BOTH user-actionable and transient → user-actionable (Edge Case)", () => {
+    const ambiguous = "usage limit reached (429 rate limit)";
+    // The transient registry alone would claim this string...
+    expect(TRANSIENT_ERROR_PATTERNS.some((re) => re.test(ambiguous))).toBe(true);
+    // ...but user-actionable is checked first: escalate-now beats retry-loop.
+    expect(classifyFailure(ambiguous)).toBe("user-actionable");
+  });
+
+  it("no-regression: unmatched errors classify exactly as today (AC 12)", () => {
+    expect(classifyFailure("agent produced no output")).toBe("deterministic");
+    expect(classifyFailure("socket connection closed unexpectedly")).toBe("transient");
+    // A pure transient rate-limit (no usage/spend wording) stays transient.
+    expect(classifyFailure("HTTP 429: rate limit exceeded")).toBe("transient");
+  });
+});
+
+describe("USER_ACTIONABLE_ERROR_PATTERNS registry (Sprint 15, AC 3, 4, 13)", () => {
+  it("is an enumerable, code-only array of at least one seed entry", () => {
+    expect(Array.isArray(USER_ACTIONABLE_ERROR_PATTERNS)).toBe(true);
+    expect(USER_ACTIONABLE_ERROR_PATTERNS.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("every entry carries a RegExp pattern and a non-empty action, no /g flag (AC 13)", () => {
+    for (const entry of USER_ACTIONABLE_ERROR_PATTERNS as UserActionablePattern[]) {
+      expect(entry.pattern).toBeInstanceOf(RegExp);
+      expect(entry.pattern.flags).not.toContain("g");
+      expect(typeof entry.action).toBe("string");
+      expect(entry.action.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it("ships the billing seed (AC 4)", () => {
+    expect(
+      USER_ACTIONABLE_ERROR_PATTERNS.some((e) => e.pattern.test("You've hit your monthly spend limit"))
+    ).toBe(true);
+  });
+
+  it("does NOT ship an invalid-model seed (cut pre-merge — cannot fire on the exit-0 CLI path)", () => {
+    // Guards against reintroducing a pattern that classifyFailure can never see:
+    // the claude CLI exits 0 on an unknown --model, so the error string is the
+    // missing-outputs message, not a model advisory. See registry comment.
+    expect(
+      USER_ACTIONABLE_ERROR_PATTERNS.some((e) =>
+        e.pattern.test("unknown model: definitely-not-a-real-model-xyz")
+      )
+    ).toBe(false);
+  });
+});
+
+describe("resolveUserAction (Sprint 15, AC 7)", () => {
+  it("names raising the usage limit for a billing failure", () => {
+    const action = resolveUserAction("You've hit your monthly spend limit");
+    expect(action).not.toBeNull();
+    expect(action!.toLowerCase()).toContain("claude.ai/settings/usage");
+  });
+
+  it("returns null when no user-actionable pattern matches", () => {
+    expect(resolveUserAction("agent produced no output")).toBeNull();
+    expect(resolveUserAction("socket connection closed unexpectedly")).toBeNull();
+    // An unknown-model advisory is NOT user-actionable this sprint (deferred).
+    expect(resolveUserAction("unknown model: definitely-not-a-real-model-xyz")).toBeNull();
   });
 });
 

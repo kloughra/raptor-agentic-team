@@ -11,7 +11,10 @@ import * as os from "os";
  * re-derives with drifted logic against old text.
  */
 
-export type FailureClassification = "transient" | "deterministic";
+export type FailureClassification =
+  | "transient"
+  | "deterministic"
+  | "user-actionable";
 
 /** Transient retry cap per step (Architect ruling, spec AC 7). */
 export const TRANSIENT_RETRY_CAP = 5;
@@ -37,16 +40,90 @@ export const TRANSIENT_ERROR_PATTERNS: RegExp[] = [
 ];
 
 /**
- * Classify a failure's error summary as transient (infra-level, does not
- * consume a circuit-breaker attempt slot) or deterministic (today's slot
- * accounting). Deterministic is the default (AC 9 backward compat is handled
- * at read sites via `?? "deterministic"`).
+ * A user-actionable failure pattern (Sprint 15, user-actionable-failure-class).
+ *
+ * Unlike TRANSIENT_ERROR_PATTERNS (a bare `RegExp[]`), each user-actionable
+ * entry carries the concrete `action` the user must take, so the escalation
+ * message and the matched pattern cannot drift (spec AC 7 / architecture
+ * §Technology Choices #2).
+ */
+export interface UserActionablePattern {
+  /** Regex tested against the error summary. No /g flag (constraint 13). */
+  pattern: RegExp;
+  /** Concrete remediation named in the escalation detail (AC 7). */
+  action: string;
+}
+
+/**
+ * User-actionable (blocker-is-outside-the-sprint) error patterns. Code-only
+ * registry (spec AC 3 / architecture §Constraints — NOT user-configurable via
+ * config.json, mirroring TRANSIENT_ERROR_PATTERNS). Exported so tests can
+ * enumerate it. Adding a future signature is a one-line addition with no
+ * pipeline change.
+ *
+ * No /g flags: a stateful lastIndex would make classification non-deterministic
+ * (constraint 13). Registry ORDER is significant — `resolveUserAction` returns
+ * the FIRST match.
+ *
+ * Sprint 15 ships EXACTLY ONE seed pattern (billing / spend-limit). An
+ * invalid-model seed was cut before merge: the `claude` CLI does NOT fail on an
+ * unknown `--model` — it prints an advisory to STDOUT ("There's an issue with
+ * the selected model (…). It may not exist or you may not have access to it.")
+ * and EXITS 0. `spawnAgent` therefore returns success, the step then fails on
+ * MISSING OUTPUTS, and the string `classifyFailure` sees is "Agent completed
+ * (exit 0) but did not create required output files" — never the model advisory.
+ * No regex in THIS registry can ever fire on that path, and a broad "invalid
+ * model" pattern would mis-escalate any deterministic failure whose output
+ * merely mentions an unsupported model (e.g. while working on the models feature
+ * itself). Detecting invalid-model needs work in the exit-0 / agent-output
+ * inspection path (agents.ts / the exit-0 branch of `runAgentStepCycle`), not
+ * here — tracked as Inbox item `invalid-model-user-actionable-detection`.
+ */
+export const USER_ACTIONABLE_ERROR_PATTERNS: UserActionablePattern[] = [
+  {
+    // billing / spend-limit — specimen "You've hit your monthly spend limit"
+    // (commits 908bf63, 9394bdd, f9bc035). Generalized to tolerate phrasing
+    // drift ("monthly spend limit" / "usage limit") per the Edge Case, without
+    // over-fitting one exact string.
+    pattern: /spend limit|(?:monthly|daily)?\s*(?:spend|usage) limit|usage limit reached/i,
+    action:
+      "Raise your usage limit at https://claude.ai/settings/usage, then resume the sprint.",
+  },
+];
+
+/**
+ * Classify a failure's error summary. Precedence (Open Question 1 ruling —
+ * architecture §Constraints): user-actionable → transient → deterministic.
+ * User-actionable is checked FIRST so an ambiguous string (e.g. a usage-limit
+ * phrasing that also brushes a transient rate-limit pattern) resolves to
+ * escalate-now rather than retry-loop — retrying a spend-limit error as if it
+ * were a network flake is the exact waste this feature removes.
+ *
+ * Deterministic remains the default (AC 9 backward compat is handled at read
+ * sites via `?? "deterministic"`).
  */
 export function classifyFailure(errorSummary: string): FailureClassification {
+  for (const { pattern } of USER_ACTIONABLE_ERROR_PATTERNS) {
+    if (pattern.test(errorSummary)) return "user-actionable";
+  }
   for (const pattern of TRANSIENT_ERROR_PATTERNS) {
     if (pattern.test(errorSummary)) return "transient";
   }
   return "deterministic";
+}
+
+/**
+ * Resolve the concrete user action for a user-actionable failure (spec AC 7).
+ * Returns the `action` of the FIRST matching user-actionable pattern (registry
+ * order), or `null` when no user-actionable pattern matches. Used by the
+ * escalate pipeline to build the actionable escalation detail. Pure,
+ * deterministic, no /g.
+ */
+export function resolveUserAction(errorSummary: string): string | null {
+  for (const { pattern, action } of USER_ACTIONABLE_ERROR_PATTERNS) {
+    if (pattern.test(errorSummary)) return action;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
