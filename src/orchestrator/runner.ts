@@ -62,6 +62,7 @@ import {
 import {
   classifyFailure,
   deriveFailureSignature,
+  resolveUserAction,
   TRANSIENT_RETRY_CAP,
   TRANSIENT_RETRY_DELAY_MS,
 } from "./failure-classification";
@@ -369,8 +370,9 @@ export function checkSalvage(
 
 /**
  * The retry decision returned after every failed agent attempt (CB-1/2/4).
- * Decision ordering (architecture, Open Question 5 ruling):
- * salvage-complete > transient > no-progress short-circuit > slot accounting.
+ * Decision ordering (architecture, Open Question 5 ruling + Sprint 15):
+ * salvage-complete > user-actionable (escalate-now) > transient >
+ * no-progress short-circuit > slot accounting.
  * (BLOCKER escalation is handled by callers before recording, unchanged.)
  */
 export type RetryDecision =
@@ -378,7 +380,11 @@ export type RetryDecision =
   | { kind: "retry"; consumesSlot: boolean; delayMs: number }
   | {
       kind: "escalate";
-      reason: "no-progress" | "transient-cap" | "attempts-exhausted";
+      reason:
+        | "no-progress"
+        | "transient-cap"
+        | "attempts-exhausted"
+        | "user-actionable";
       detail: string;
     };
 
@@ -402,7 +408,25 @@ export function decideAfterFailure(
   const failures = stepState.failures ?? [];
   const classification = newFailure.classification ?? "deterministic";
 
-  // 2. Transient (CB-2, AC 6-7): retry without consuming a deterministic
+  // 2. User-actionable (Sprint 15): the blocker is OUTSIDE the sprint — no
+  //    amount of retrying can succeed until the user acts (raise a spend
+  //    limit, fix a typo'd --model). Escalate-now on the FIRST attempt,
+  //    dominating the transient cap, the no-progress short-circuit, and
+  //    deterministic slot accounting (spec AC 5). The branch keys off the
+  //    CURRENT failure's classification, not the attempt counter, so a
+  //    user-actionable failure on attempt 2+ still escalates immediately
+  //    (Edge Case). Salvage-complete still wins above (ordering).
+  if (classification === "user-actionable") {
+    return {
+      kind: "escalate",
+      reason: "user-actionable",
+      detail:
+        resolveUserAction(newFailure.errorSummary) ??
+        "This failure requires action outside the sprint before it can succeed.",
+    };
+  }
+
+  // 3. Transient (CB-2, AC 6-7): retry without consuming a deterministic
   //    slot, bounded by the transient cap. Transient failures never
   //    participate in the CB-1 signature comparison.
   if (classification === "transient") {
@@ -421,7 +445,7 @@ export function decideAfterFailure(
     return { kind: "retry", consumesSlot: false, delayMs: TRANSIENT_RETRY_DELAY_MS };
   }
 
-  // 3. No-progress short-circuit (CB-1, AC 1-4): compare against the most
+  // 4. No-progress short-circuit (CB-1, AC 1-4): compare against the most
   //    recent PRIOR deterministic failure, skipping interleaved transient
   //    records. Signatures are persisted, never re-derived (constraint 4):
   //    an old record without a signature never matches. A match across the
@@ -446,7 +470,7 @@ export function decideAfterFailure(
     break; // only the MOST RECENT prior deterministic failure participates
   }
 
-  // 4. Deterministic slot accounting — today's exact behavior (AC 8).
+  // 5. Deterministic slot accounting — today's exact behavior (AC 8).
   //    `attempts` keeps its frozen meaning: deterministic attempts consumed,
   //    including this failure (constraint 3).
   if ((stepState.attempts ?? 0) >= MAX_RETRY_ATTEMPTS) {
@@ -609,6 +633,18 @@ export function buildMultiFeatureEscalatedMessage(
   const lines = escalated.map((f) => {
     const escStep = f.steps.find((s) => s.status === "escalated");
     const stepDesc = escStep ? `step ${escStep.step} (${escStep.name})` : "an earlier step";
+    // Sprint 15: for a user-actionable escalation, surface the concrete action
+    // so the user can act without guessing (spec AC 7 / AC 8 — same seam parity
+    // as the single-feature path). Re-resolve from the last failure's summary;
+    // the escalation reason was persisted on the step by the shared pipeline.
+    if (escStep && escStep.escalationReason === "user-actionable") {
+      const lastError =
+        escStep.failures[escStep.failures.length - 1]?.errorSummary ?? "";
+      const action =
+        resolveUserAction(lastError) ??
+        "This failure requires action outside the sprint before it can succeed.";
+      return `  • ${f.slug} at ${stepDesc} — action required: ${action}`;
+    }
     return `  • ${f.slug} at ${stepDesc}`;
   });
 
@@ -618,6 +654,50 @@ export function buildMultiFeatureEscalatedMessage(
     `Run resume_sprint --action=request-changes --feedback="…" ${slugHint} to re-engage. ` +
     `Completed sibling features are preserved.`
   );
+}
+
+/**
+ * Build the user-facing escalation message for the SINGLE-feature runner seam
+ * (Sprint 15, user-actionable-failure-class — AC 7/8). Pure and exported so the
+ * production message-rendering seam is testable in isolation (TEAM.md QA rule
+ * 12 — parity asserted at the seam, mirroring `buildMultiFeatureEscalatedMessage`).
+ *
+ * For a `user-actionable` escalation it names the concrete action the user must
+ * take (spend limit → claude.ai/settings/usage) instead of the generic
+ * "escalated (transient cap)" arm, which previously
+ * MISLABELED any non-exhausted reason. `attempts-exhausted` and the
+ * no-progress/transient-cap arms are byte-for-byte unchanged (AC 12).
+ */
+export function buildSingleFeatureEscalationMessage(
+  step: WorkflowStep,
+  reason: NonNullable<StepState["escalationReason"]>,
+  stepState: StepState,
+  escalationDetail?: string | null
+): string {
+  const lastError =
+    stepState.failures[stepState.failures.length - 1]?.errorSummary ?? "unknown";
+
+  if (reason === "user-actionable") {
+    // Prefer the pipeline detail; fall back to re-resolving from the last
+    // failure summary so the action survives a reload where detail was not
+    // threaded through.
+    const action =
+      escalationDetail ??
+      resolveUserAction(lastError) ??
+      "This failure requires action outside the sprint before it can succeed.";
+    return (
+      `Step ${step.step} (${step.name}) escalated — action required before this can succeed:\n${action}\n\n` +
+      `Last error:\n${lastError}`
+    );
+  }
+
+  if (reason === "attempts-exhausted") {
+    return `Step ${step.step} (${step.name}) failed after ${MAX_RETRY_ATTEMPTS} attempts.\n\nLast error:\n${lastError}`;
+  }
+
+  return `Step ${step.step} (${step.name}) escalated (${
+    reason === "no-progress" ? "no progress" : "transient cap"
+  }): ${escalationDetail ?? lastError}`;
 }
 
 /**
@@ -1299,10 +1379,12 @@ export async function runSprintFromStep(
         // Non-critical
       }
 
-      const message =
-        reason === "attempts-exhausted"
-          ? `Step ${step.step} (${step.name}) failed after ${MAX_RETRY_ATTEMPTS} attempts.\n\nLast error:\n${stepState.failures[stepState.failures.length - 1]?.errorSummary || "unknown"}`
-          : `Step ${step.step} (${step.name}) escalated (${reason === "no-progress" ? "no progress" : "transient cap"}): ${escalationDetail ?? stepState.failures[stepState.failures.length - 1]?.errorSummary ?? "unknown"}`;
+      const message = buildSingleFeatureEscalationMessage(
+        step,
+        reason,
+        stepState,
+        escalationDetail
+      );
 
       return {
         status: "escalated",

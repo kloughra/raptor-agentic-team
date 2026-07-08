@@ -18,10 +18,13 @@ import { describe, it, expect } from "@jest/globals";
 import {
   resolveEscalatedResumeTarget,
   buildMultiFeatureEscalatedMessage,
+  buildSingleFeatureEscalationMessage,
   buildSalvageSection,
 } from "./runner";
 import { createFeatureStates, deriveSprintStatus } from "./multi-runner";
 import { FeatureState, StepState, createInitialState } from "./state";
+import { SPRINT_WORKFLOW } from "./workflow";
+import { classifyFailure, deriveFailureSignature } from "./failure-classification";
 
 const findStep = (f: FeatureState, n: number): StepState =>
   f.steps.find((s) => s.step === n)!;
@@ -168,6 +171,125 @@ describe("buildMultiFeatureEscalatedMessage", () => {
     expect(msg).toContain("beta");
     // more than one escalated → the required --feature=<slug> form (no brackets)
     expect(msg).toMatch(/--feature=<slug>/);
+  });
+});
+
+// ===========================================================================
+// Sprint 15 — user-actionable escalation MESSAGE seams (AC 7, AC 8)
+//
+// These drive the two REAL production message builders (single- and
+// multi-feature) that render the escalation surfaced to the user. Per TEAM.md
+// QA rule 12 and the PO test review, parity must be asserted at the seam, not
+// only on the pure classifier / decideAfterFailure.
+//
+// RED-VERIFICATION: against the pre-change code these tests FAIL because
+//   (a) `escalationReason` had no "user-actionable" member (compile-time RED),
+//   (b) the single-feature message's else-arm printed "transient cap" for any
+//       non-exhausted reason — so a user-actionable escalation was MISLABELED
+//       and the concrete action never reached the user, and
+//   (c) the multi-feature builder never surfaced any action detail.
+// Re-verify by reverting runner.ts + state.ts and re-running.
+// ===========================================================================
+
+const IMPLEMENT_STEP = SPRINT_WORKFLOW.find((s) => s.step === 5)!;
+const BILLING = "You've hit your monthly spend limit";
+
+function userActionableStepState(errorSummary: string, stepNum = 5): StepState {
+  return {
+    step: stepNum,
+    role: "engineer",
+    name: "Implement",
+    status: "escalated",
+    artifacts: [],
+    completedAt: null,
+    attempts: 1,
+    failures: [
+      {
+        attempt: 1,
+        errorSummary,
+        timestamp: "2026-07-07T00:00:00.000Z",
+        hadPartialArtifacts: false,
+        classification: classifyFailure(errorSummary),
+        signature: deriveFailureSignature(errorSummary),
+      },
+    ],
+    escalationReason: "user-actionable",
+  };
+}
+
+describe("buildSingleFeatureEscalationMessage — user-actionable seam (AC 7)", () => {
+  it("names the billing action and does NOT mislabel it as 'transient cap'", () => {
+    const msg = buildSingleFeatureEscalationMessage(
+      IMPLEMENT_STEP,
+      "user-actionable",
+      userActionableStepState(BILLING),
+      "Raise your usage limit at https://claude.ai/settings/usage, then resume the sprint."
+    );
+    expect(msg.toLowerCase()).toContain("claude.ai/settings/usage");
+    expect(msg).toMatch(/action required/i);
+    expect(msg).not.toMatch(/transient cap/i);
+    expect(msg).not.toMatch(/no progress/i);
+  });
+
+  it("re-resolves the action from the last failure when no detail is threaded", () => {
+    // Fallback path (e.g. after a reload where decision.detail was not kept).
+    const msg = buildSingleFeatureEscalationMessage(
+      IMPLEMENT_STEP,
+      "user-actionable",
+      userActionableStepState(BILLING)
+    );
+    expect(msg.toLowerCase()).toContain("claude.ai/settings/usage");
+  });
+
+  it("leaves the attempts-exhausted arm byte-for-byte unchanged (AC 12 no-regression)", () => {
+    const state: StepState = {
+      step: 5,
+      role: "engineer",
+      name: "Implement",
+      status: "escalated",
+      artifacts: [],
+      completedAt: null,
+      attempts: 3,
+      failures: [
+        { attempt: 3, errorSummary: "SyntaxError: unexpected token", timestamp: "t", hadPartialArtifacts: false },
+      ],
+      escalationReason: "attempts-exhausted",
+    };
+    const msg = buildSingleFeatureEscalationMessage(IMPLEMENT_STEP, "attempts-exhausted", state);
+    expect(msg).toMatch(/failed after 3 attempts/);
+    expect(msg).toContain("SyntaxError: unexpected token");
+  });
+});
+
+describe("buildMultiFeatureEscalatedMessage — user-actionable seam (AC 8 parity)", () => {
+  it("surfaces the concrete billing action for a user-actionable feature escalation", () => {
+    const state = createInitialState("recover", 15, []);
+    state.features = createFeatureStates(["alpha", "beta"], 15);
+    completeTerminal(state.features[0]);
+    // escalate beta at step 5 with a user-actionable billing failure
+    const beta = state.features[1];
+    const step5 = beta.steps.find((s) => s.step === 5)!;
+    step5.status = "escalated";
+    step5.attempts = 1;
+    step5.failures = [
+      {
+        attempt: 1,
+        errorSummary: BILLING,
+        timestamp: "t",
+        hadPartialArtifacts: false,
+        classification: classifyFailure(BILLING),
+        signature: deriveFailureSignature(BILLING),
+      },
+    ];
+    step5.escalationReason = "user-actionable";
+    beta.status = "escalated";
+    beta.currentStep = 5;
+    state.status = deriveSprintStatus(state.features);
+
+    const msg = buildMultiFeatureEscalatedMessage(state, 15);
+    expect(msg).toContain("beta");
+    expect(msg.toLowerCase()).toContain("claude.ai/settings/usage");
+    expect(msg).toMatch(/action required/i);
   });
 });
 
