@@ -298,7 +298,7 @@ describe("hasBlockerMarker: conservative-bias edge cases", () => {
 
   it("[no-regression] never throws on untrusted / adversarial input (reliability NFR)", () => {
     const inputs = [
-      " binary-ish",
+      "\u0000\u0001binary-ish\u0002",
       "```".repeat(10000),
       ">".repeat(5000),
       "no marker here".repeat(10000),
