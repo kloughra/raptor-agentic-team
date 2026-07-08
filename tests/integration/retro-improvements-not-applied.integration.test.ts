@@ -64,11 +64,17 @@ const FALLBACK_PLACED_AT = "Adopted Retro Improvements (Unplaced)";
 const APPLY_COMMIT_MSG = `[PO] update: apply retrospective improvements from sprint ${SPRINT}`;
 
 // ─── Proposal fixtures ──────────────────────────────────────────────────────
-// AC 9 shape: plausible-but-inexact Section, exactly like the Sprint 10/12
-// live incidents ("Product Owner responsibilities" vs "### Product Owner (PO)").
+// AC 9 shape: a Section that references NO real heading, so it must fall back.
+// NOTE (Sprint 15, retro-section-matching-rarely-hits-target): the original
+// "Product Owner responsibilities" now CORRECTLY resolves to "### Product Owner
+// (PO)" under the new segment-and-match resolver (token-identical to the Sprint
+// 14 live incident). To keep this fixture's no-false-positive / fallback intent
+// under the new resolver, its section is repointed to plausible-but-inexact
+// prose whose whole-word tokens contain no real heading's core token sequence
+// ([product, ownership, duties, during, intake] — "ownership" ≠ "owner").
 const P_INEXACT_PO: RetroProposal = {
   role: "po",
-  section: "Product Owner responsibilities",
+  section: "Product ownership duties during intake",
   type: "addition",
   proposal: "Record spec-review outcomes in the sprint log before handoff.",
   rationale: "Sprint 10 and 12 adopted proposals were silently dropped.",
@@ -285,7 +291,7 @@ describe("applyImprovements — outcome-returning contract (AC 1, AC 2)", () => 
     expect(fallbackBlock).toContain(P_INEXACT_PO.proposal);
     expect(fallbackBlock).toMatch(/Sprint 1/);
     expect(fallbackBlock).toMatch(/PO/i);
-    expect(fallbackBlock).toContain("Product Owner responsibilities");
+    expect(fallbackBlock).toContain("Product ownership duties during intake");
   });
 
   it("normalization tolerates case, extra whitespace, and echoed leading hashes", () => {

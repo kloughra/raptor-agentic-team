@@ -28,9 +28,19 @@ const TEMPLATE_PATH = path.join(__dirname, "../../template/TEAM.md");
 const SPRINT = 1;
 const FALLBACK_PLACED_AT = "Adopted Retro Improvements (Unplaced)";
 
+// NOTE (Sprint 15, retro-section-matching-rarely-hits-target): the segment-and-
+// match resolver deliberately supersedes exact-only matching, so the original
+// fixture section "Product Owner responsibilities" now CORRECTLY resolves to the
+// real "### Product Owner (PO)" heading (token-identical to the Sprint 14 live
+// incident `QA Engineer (Responsibilities)` that the new architecture requires
+// to resolve). To keep this Sprint 13 fixture's NO-FALSE-POSITIVE intent under
+// the new resolver, its section is repointed to plausible-but-inexact prose
+// whose whole-word tokens ([product, ownership, duties, during, intake]) contain
+// no real heading's core token sequence — so it still lands in the fallback,
+// which is exactly what these tests assert.
 const P_INEXACT_PO: RetroProposal = {
   role: "po",
-  section: "Product Owner responsibilities",
+  section: "Product ownership duties during intake",
   type: "addition",
   proposal: "Record spec-review outcomes in the sprint log before handoff.",
   rationale: "Sprint 10 and 12 adopted proposals were silently dropped.",
@@ -112,7 +122,7 @@ describe("applyImprovements — target matching (AC 2, Open Q 2 ruling)", () => 
     // Attribution: sprint + role + verbatim target section (AC 2 / Open Q 3).
     expect(fallbackBlock).toMatch(/Sprint 1/);
     expect(fallbackBlock).toMatch(/PO/);
-    expect(fallbackBlock).toContain("Product Owner responsibilities");
+    expect(fallbackBlock).toContain("Product ownership duties during intake");
     // Type is part of the attribution marker.
     expect(fallbackBlock).toContain("(addition)");
   });
@@ -310,5 +320,98 @@ describe("updateRetroDocWithAppliedChanges (AC 3)", () => {
       { role: "qa", section: "QA Engineer", placement: "applied", placedAt: "QA Engineer" },
     ]);
     expect(updated).toBe(handEdited);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sprint 15: retro-section-matching-rarely-hits-target
+// Colocated unit coverage of the segment-and-match resolver (Open Question 1 →
+// option b), exercised through the unchanged applyImprovements signature against
+// the REAL bundled template. The two runner production seams are covered by
+// tests/integration/retro-section-matching-rarely-hits-target.integration.test.ts
+// — this file complements, never replaces, those seam tests (TEAM.md QA rule 12).
+//
+// RED-verification (AC 10): each compound-resolution assertion below FAILS
+// against the pre-Sprint-15 exact-only matcher — a compound/descriptive Section
+// never equals a single heading, so exact-only sends it to the Unplaced
+// fallback. Repointing applyImprovements back at findHeadingLine re-reddens them.
+// ═══════════════════════════════════════════════════════════════════════════
+describe("applyImprovements — Sprint 15 compound Section resolution", () => {
+  let template: string;
+  beforeAll(() => {
+    template = fs.readFileSync(TEMPLATE_PATH, "utf-8");
+  });
+
+  const mk = (section: string, proposal: string): RetroProposal => ({
+    role: "po",
+    section,
+    type: "addition",
+    proposal,
+    rationale: "r",
+    impact: "i",
+  });
+
+  it("AC 1 — a compound 'Backlog Management → Rules' resolves to '## Backlog Management' (longest-match)", () => {
+    const r = applyImprovements(template, [mk("Backlog Management → Rules", "S15-BM-MARKER")], SPRINT);
+    expect(r.outcomes[0].placement).toBe("applied");
+    expect(r.outcomes[0].placedAt).toBe("Backlog Management");
+  });
+
+  it("AC 1 tie-break — deepest matching level wins the Sprint 13 live-incident Section (→ Product Owner (PO))", () => {
+    const section =
+      "Roles & Responsibilities → Product Owner (Responsibilities); reinforced in Backlog Management → Rules";
+    const r = applyImprovements(template, [mk(section, "S15-PO-MARKER")], SPRINT);
+    expect(r.outcomes[0].placement).toBe("applied");
+    expect(r.outcomes[0].placedAt).toBe("Product Owner (PO)");
+  });
+
+  it("parenthetical qualifier is optional — 'QA Engineer (Responsibilities)' → '### QA Engineer'", () => {
+    const r = applyImprovements(
+      template,
+      [mk("Roles & Responsibilities → QA Engineer (Responsibilities)", "S15-QA-MARKER")],
+      SPRINT
+    );
+    expect(r.outcomes[0].placement).toBe("applied");
+    expect(r.outcomes[0].placedAt).toBe("QA Engineer");
+  });
+
+  it("no-hijack — 'Sprint Workflow ordering of Rules' → '## Sprint Workflow', not the generic '### Rules'", () => {
+    const r = applyImprovements(template, [mk("Sprint Workflow ordering of Rules", "S15-WF-MARKER")], SPRINT);
+    expect(r.outcomes[0].placement).toBe("applied");
+    expect(r.outcomes[0].placedAt).toBe("Sprint Workflow");
+  });
+
+  it("AC 4 whole-token — 'architecture' does not match the '### Architect' heading → fallback", () => {
+    const r = applyImprovements(
+      template,
+      [mk("notes on the architecture of the system", "S15-ARCH-MARKER")],
+      SPRINT
+    );
+    expect(r.outcomes[0].placement).toBe("applied-fallback");
+  });
+
+  it("AC 4 no-shred — 'Roles & Responsibilities' is not split on '&' and resolves to its heading", () => {
+    const r = applyImprovements(template, [mk("Roles & Responsibilities", "S15-ROLES-MARKER")], SPRINT);
+    expect(r.outcomes[0].placement).toBe("applied");
+    expect(r.outcomes[0].placedAt).toBe("Roles & Responsibilities");
+  });
+
+  it("AC 6 — a compound Section referencing only fenced headings stays in fallback", () => {
+    const r = applyImprovements(template, [mk("Test Results → Linked Spec", "S15-FENCE-MARKER")], SPRINT);
+    expect(r.outcomes[0].placement).toBe("applied-fallback");
+  });
+
+  it("empty / whitespace-only Section → fallback (no heading resolution attempted)", () => {
+    const r = applyImprovements(template, [mk("   ", "S15-EMPTY-MARKER")], SPRINT);
+    expect(r.outcomes[0].placement).toBe("applied-fallback");
+  });
+
+  it("AC 5 — resolution is deterministic across repeated runs", () => {
+    const section = "Roles & Responsibilities → QA Engineer (Responsibilities)";
+    const a = applyImprovements(template, [mk(section, "S15-DET-MARKER")], SPRINT);
+    const b = applyImprovements(template, [mk(section, "S15-DET-MARKER")], SPRINT);
+    expect(b.outcomes[0].placement).toBe(a.outcomes[0].placement);
+    expect(b.outcomes[0].placedAt).toBe(a.outcomes[0].placedAt);
+    expect(b.content).toBe(a.content);
   });
 });
