@@ -1,7 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 import simpleGit from "simple-git";
 import { Registry, ProjectEntry } from "./registry";
+import { RaptorConfig } from "./config";
 import {
   SCAFFOLD_DIRS,
   readTemplate,
@@ -22,8 +24,12 @@ import {
   runSprintFromStep,
   resumeSprint,
   loadSprintState,
+  saveSprintState,
   renderProgressTable,
+  emitNotification,
 } from "./orchestrator";
+import { resolveDrivers } from "./orchestrator/notification-driver";
+import { SprintState } from "./orchestrator/state";
 import { loadSprintSummaries } from "./orchestrator/summary";
 import { resolveDinoNames } from "./orchestrator/dino";
 import { discoverProjectContext, generateContextDocument } from "./orchestrator/context-discovery";
@@ -198,6 +204,59 @@ export interface ToolContext {
   projectsBaseDir: string;
   registry: Registry;
   templatePath: string;
+  /**
+   * notification-egress (Sprint 16): the loaded Raptor config, used to resolve
+   * notification drivers at the tool boundary. Optional & additive — when absent
+   * (e.g. tests that build a bare context) no notification is dispatched, so the
+   * behavior is byte-for-byte pre-feature.
+   */
+  notifications?: {
+    config: RaptorConfig;
+  };
+}
+
+/**
+ * notification-egress (Sprint 16) — the production emission seam.
+ *
+ * After a `run_sprint`/`resume_sprint` invocation returns, reload the
+ * freshly-persisted `SprintState` from disk and dispatch a single, best-effort
+ * notification derived EXCLUSIVELY from that persisted state (never agent stdout —
+ * AC #2). Fully swallow-all wrapped: a notification failure can never break the
+ * tool call (AC #9). No-op when notifications are unconfigured on the context.
+ */
+async function dispatchNotification(
+  ctx: ToolContext,
+  projectSlug: string,
+  sprint: number
+): Promise<void> {
+  try {
+    if (!ctx.notifications) return;
+    const state = loadSprintState(projectSlug, sprint);
+    if (!state) return;
+
+    const sinkPath = resolveSinkPath(ctx.notifications.config, projectSlug);
+    const drivers = resolveDrivers(ctx.notifications.config, sinkPath);
+
+    await emitNotification(state, drivers, {
+      projectSlug,
+      occurredAt: new Date().toISOString(),
+      save: (s: SprintState) => saveSprintState(projectSlug, sprint, s),
+    });
+  } catch {
+    // Best-effort: emission never disturbs the tool result.
+  }
+}
+
+/** Resolve the notification sink path — config override (with `~` and `{slug}`) or default. */
+function resolveSinkPath(config: RaptorConfig, projectSlug: string): string {
+  const override = config.notifications?.sinkPath;
+  if (override && override.length > 0) {
+    const expanded = override.startsWith("~/")
+      ? path.join(os.homedir(), override.slice(2))
+      : override;
+    return expanded.replace("{slug}", projectSlug);
+  }
+  return path.join(os.homedir(), ".raptor", projectSlug, "notifications.jsonl");
 }
 
 export async function bootstrapProject(
@@ -701,6 +760,9 @@ export async function runSprint(
     1
   );
 
+  // notification-egress (Sprint 16): emit a state-derived event at the boundary.
+  await dispatchNotification(ctx, args.name, args.sprint);
+
   return {
     status: result.status,
     progress: result.progress,
@@ -749,6 +811,9 @@ export async function resumeSprintTool(
     args.feedback,
     args.feature
   );
+
+  // notification-egress (Sprint 16): emit a state-derived event at the boundary.
+  await dispatchNotification(ctx, args.name, args.sprint);
 
   return {
     status: result.status,
