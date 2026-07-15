@@ -52,6 +52,14 @@ export interface StepState {
     | "no-progress"
     | "transient-cap"
     | "user-actionable";
+  /**
+   * branch-protection-merge-lockout (Sprint 18): the actionable, PR-naming
+   * escalation message persisted at record time so notification-egress — which
+   * derives its payload EXCLUSIVELY from persisted state — can surface the
+   * concrete human action (AC 5/6). Additive & optional: older sprint-N.json
+   * files without it read as `undefined` and render exactly as before.
+   */
+  escalationDetail?: string;
 }
 
 export interface CheckpointState {

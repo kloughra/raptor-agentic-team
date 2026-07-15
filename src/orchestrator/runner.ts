@@ -111,7 +111,12 @@ export interface SprintResult {
   status: "checkpoint" | "complete" | "error" | "escalated";
   progress: string;
   checkpoint?: CheckpointPrompt;
-  message?: string;
+  /**
+   * Human-facing result message. Required so callers (and the
+   * branch-protection-merge-lockout seam tests, Sprint 18) can read it without
+   * narrowing — every SprintResult names its outcome, including checkpoints.
+   */
+  message: string;
   state: SprintState;
 }
 
@@ -697,6 +702,36 @@ export function buildSingleFeatureEscalationMessage(
 }
 
 /**
+ * Build the actionable branch-protection merge-lockout escalation message
+ * (Sprint 18, branch-protection-merge-lockout — AC 5). Pure and exported so BOTH
+ * merge seams (single-feature step-9 do/while and multi-feature
+ * `runMergeStepForFeature`) call the SAME builder ⇒ byte-identical messages
+ * (AC 4 / C2 — parity by shared builder, not shared control flow). Mirrors
+ * `buildSingleFeatureEscalationMessage` / `buildMultiFeatureEscalatedMessage`.
+ *
+ * Names the PR (when known) and the concrete human action so a user — or an
+ * autonomous driver reading the state-derived notification — can act without
+ * inspecting the repo. When the PR number is absent (local-merge fallback / no
+ * open PR) it degrades to "This PR blocked at merge …", never emitting a stray
+ * "PR #null" / "PR #undefined".
+ */
+export function buildMergeLockoutEscalation(
+  prNumber: number | null | undefined,
+  action: string,
+  lastError: string
+): string {
+  const prRef =
+    typeof prNumber === "number" && Number.isFinite(prNumber)
+      ? `PR #${prNumber}`
+      : "This PR";
+  return (
+    `${prRef} blocked at merge — branch protection prevents the automated squash-merge.\n` +
+    `Action required: ${action}\n` +
+    `Last error: ${lastError}`
+  );
+}
+
+/**
  * Find the first duplicate slug in a list, or null if all are unique.
  */
 function findDuplicateSlug(slugs: string[]): string | null {
@@ -1043,6 +1078,48 @@ export async function runSprintFromStep(
             classification: classifyFailure(errorSummary),
             signature: deriveFailureSignature(errorSummary),
           });
+
+          // branch-protection-merge-lockout (Sprint 18, AC 3/5/7/10). A
+          // user-actionable refusal (GitHub branch protection: locked `main`,
+          // required review) can never succeed on retry — escalate NOW on the
+          // first failure, BEFORE the attempts-exhausted branch, so exactly one
+          // attempt is spent and exactly one FailureRecord is appended (C1:
+          // escalate-now dominates the merge budget; keyed on the current
+          // failure's classification, not the attempt counter). Parity with the
+          // multi-feature seam is enforced by the shared builder + identical
+          // guard (C2). Non-user-actionable failures fall straight through to
+          // today's exact retry accounting (AC 8).
+          if (classifyFailure(errorSummary) === "user-actionable") {
+            const action =
+              resolveUserAction(errorSummary) ??
+              "This failure requires action outside the sprint before it can succeed.";
+            const detail = buildMergeLockoutEscalation(
+              mergeResult.prNumber,
+              action,
+              errorSummary
+            );
+            stepState.status = "escalated";
+            stepState.escalationReason = "user-actionable";
+            stepState.escalationDetail = detail;
+            state.status = "escalated";
+            saveSprintState(projectSlug, sprint, state);
+
+            try {
+              await git.commit(
+                `[ESCALATE] ${formatHandoffRole("engineer", dinoNames)}: step ${step.step} (${step.name}) blocked by branch protection — user action required.\n${detail}`,
+                { "--allow-empty": null }
+              );
+            } catch {
+              // Non-critical
+            }
+
+            return {
+              status: "escalated",
+              progress: renderProgressTable(state),
+              message: detail,
+              state,
+            };
+          }
 
           if (stepState.attempts >= MAX_RETRY_ATTEMPTS) {
             // Escalation block preserved verbatim (AC #3, #9): step 9 ->
@@ -1455,6 +1532,7 @@ export async function runSprintFromStep(
         status: "checkpoint",
         progress: renderProgressTable(state),
         checkpoint,
+        message: `Checkpoint: ${checkpoint.title} — awaiting review.`,
         state,
       };
     }
@@ -2341,6 +2419,7 @@ async function runMultiFeatureSprint(ctx: DispatchContext): Promise<SprintResult
             status: "checkpoint",
             progress: renderProgressTable(state),
             checkpoint,
+            message: `Checkpoint: ${checkpoint.title} for ${feature.slug} — awaiting review.`,
             state,
           };
         }
@@ -2440,6 +2519,7 @@ async function runMultiFeatureSprint(ctx: DispatchContext): Promise<SprintResult
         status: "checkpoint",
         progress: renderProgressTable(state),
         checkpoint,
+        message: `Checkpoint: ${checkpoint.title} — awaiting review.`,
         state,
       };
     }
@@ -2539,6 +2619,35 @@ async function runMergeStepForFeature(
       classification: classifyFailure(errorSummary),
       signature: deriveFailureSignature(errorSummary),
     });
+
+    // branch-protection-merge-lockout (Sprint 18, AC 4). Identical early-
+    // escalation guard as the single-feature seam (C2 — shared builder + same
+    // check keyed on the just-stamped classification). A branch-protection
+    // refusal escalates this feature on the FIRST attempt, before the
+    // attempts-exhausted branch; every other merge-failure class retains the
+    // exact pre-feature retry accounting (AC 8).
+    if (classifyFailure(errorSummary) === "user-actionable") {
+      const action =
+        resolveUserAction(errorSummary) ??
+        "This failure requires action outside the sprint before it can succeed.";
+      const detail = buildMergeLockoutEscalation(
+        mergeResult.prNumber,
+        action,
+        errorSummary
+      );
+      stepState.status = "escalated";
+      stepState.escalationReason = "user-actionable";
+      stepState.escalationDetail = detail;
+      feature.status = "escalated";
+      saveSprintState(projectSlug, sprint, state);
+      try {
+        await git.commit(
+          `[ESCALATE] ${formatHandoffRole("engineer", dinoNames)}: step 9 (Merge PR) for ${feature.slug} blocked by branch protection — user action required.\n${detail}`,
+          { "--allow-empty": null }
+        );
+      } catch { /* non-critical */ }
+      return "escalated";
+    }
 
     if (stepState.attempts >= MAX_RETRY_ATTEMPTS) {
       stepState.status = "escalated";

@@ -250,7 +250,16 @@ describe("single-feature: merge retried in place (AC #1, #2)", () => {
     const projectPath = await initProject(projectSlug, [SLUG]);
     seedSingleFeatureState(projectSlug);
     planMerges({
-      [SLUG]: [mergeFail("protected branch"), mergeFail("protected branch"), MERGE_OK],
+      // Neutral DETERMINISTIC failure specimen (retry-to-cap intent). Sprint 18
+      // (branch-protection-merge-lockout) reclassifies "protected branch" as
+      // user-actionable (escalate-after-one), so this test — which exercises the
+      // ordinary bounded retry, not branch protection — uses a non-branch-
+      // protection deterministic error instead.
+      [SLUG]: [
+        mergeFail("HTTP 422 unexpected server response"),
+        mergeFail("HTTP 422 unexpected server response"),
+        MERGE_OK,
+      ],
     });
 
     const result = await runSprintFromStep(projectPath, projectSlug, SPRINT, 9);
@@ -290,7 +299,10 @@ describe("single-feature: merge retried in place (AC #1, #2)", () => {
     const projectSlug = "sf-enrichment";
     const projectPath = await initProject(projectSlug, [SLUG]);
     seedSingleFeatureState(projectSlug);
-    planMerges({ [SLUG]: [mergeFail("base branch protection: merge blocked"), MERGE_OK] });
+    // Neutral deterministic failure then success (Sprint 18 makes branch-
+    // protection strings user-actionable/escalate-after-one; this test needs the
+    // ordinary fail-then-retry-succeeds path).
+    planMerges({ [SLUG]: [mergeFail("HTTP 422 unexpected server response"), MERGE_OK] });
 
     await runSprintFromStep(projectPath, projectSlug, SPRINT, 9);
 
@@ -306,8 +318,11 @@ describe("single-feature: escalation at cap unchanged (AC #3, #9 + edge cases)",
     const projectSlug = "sf-escalate";
     const projectPath = await initProject(projectSlug, [SLUG]);
     seedSingleFeatureState(projectSlug);
-    // Deterministic failure (branch protection) — identical every attempt.
-    planMerges({ [SLUG]: [mergeFail("gh pr merge rejected: base branch protection")] });
+    // Deterministic failure — identical every attempt. NOTE: uses a neutral
+    // non-branch-protection specimen; Sprint 18 makes branch-protection strings
+    // user-actionable (escalate-after-one), and this test exercises the ordinary
+    // retry-to-cap path.
+    planMerges({ [SLUG]: [mergeFail("HTTP 422 unexpected server response")] });
 
     const result = await runSprintFromStep(projectPath, projectSlug, SPRINT, 9);
 
@@ -476,7 +491,9 @@ describe("multi-feature: sibling isolation and mixed-completion park (AC #8 + ed
     seedMultiFeatureState(projectSlug);
     planMerges({
       [SLUG_A]: [MERGE_OK],
-      [SLUG_B]: [mergeFail("gh pr merge rejected: base branch protection")],
+      // Neutral deterministic failure (retry-to-cap intent) — Sprint 18 makes
+      // branch-protection strings user-actionable, so use a non-BP specimen.
+      [SLUG_B]: [mergeFail("HTTP 422 unexpected server response")],
     });
 
     const result = await runSprintFromStep(projectPath, projectSlug, SPRINT, 9);
