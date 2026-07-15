@@ -40,6 +40,17 @@ export interface RaptorConfig {
     enabled?: boolean;
     disabledSteps?: string[];
   };
+  /**
+   * notification-egress (Sprint 16). Out-of-band sprint lifecycle notifications
+   * via a local append-only JSONL sink (v2 REDESIGN — zero network egress).
+   * Absent key ⇒ default-on audit sink; `enabled: false` ⇒ byte-for-byte
+   * pre-feature parity. Parsed in `loadConfig` via `parseNotifications` — NOT
+   * merely declared — to avoid the `config-keys-parsed-vs-declared` defect.
+   */
+  notifications?: {
+    enabled?: boolean;
+    sinkPath?: string;
+  };
 }
 
 const DEFAULT_PROJECTS_BASE_DIR = path.join(os.homedir(), "workspace");
@@ -65,7 +76,37 @@ export function loadConfig(configPath: string): RaptorConfig {
     dinoNames: parsed.dinoNames ?? undefined,
     timeouts: parseTimeouts(parsed.timeouts),
     models: parseModels(parsed.models),
+    notifications: parseNotifications(parsed.notifications),
   };
+}
+
+/**
+ * Parse the `notifications` key from config.json (notification-egress, Sprint 16 —
+ * AC 6/7). Structural clone of `parseModels`/`parseTimeouts`: type guards drop junk
+ * field-wise; a malformed `notifications` value (not an object, or an array) is
+ * ignored entirely. Absent key → `undefined` → `resolveDrivers` ships the default-on
+ * sink; `{ enabled: false }` → the hard off-switch. `loadConfig` never throws on a
+ * bad `notifications` value, and NO secret is read or stored.
+ */
+function parseNotifications(
+  raw: unknown
+): { enabled?: boolean; sinkPath?: string } | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+
+  const source = raw as Record<string, unknown>;
+  const result: { enabled?: boolean; sinkPath?: string } = {};
+
+  if (typeof source.enabled === "boolean") {
+    result.enabled = source.enabled;
+  }
+
+  // An empty string is not a usable path → dropped field-wise.
+  if (typeof source.sinkPath === "string" && source.sinkPath.length > 0) {
+    result.sinkPath = source.sinkPath;
+  }
+
+  return result;
 }
 
 /** Valid role keys for `models.byRole` (mirrors the `Role` union). */

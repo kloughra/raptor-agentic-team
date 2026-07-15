@@ -274,6 +274,10 @@ async function main() {
     projectsBaseDir: config.projectsBaseDir,
     registry,
     templatePath,
+    // notification-egress (Sprint 16): the loaded config drives out-of-band
+    // notification emission at the tool boundary (default-on local JSONL sink;
+    // `notifications.enabled: false` restores byte-for-byte pre-feature parity).
+    notifications: { config },
   };
 
   // Create MCP server

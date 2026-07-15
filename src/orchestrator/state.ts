@@ -124,6 +124,13 @@ export interface SprintState {
    * sprints leave this null for the life of the state file.
    */
   currentFeatureSlug?: string | null;
+  /**
+   * notification-egress (Sprint 16): event keys already notified. Additive &
+   * optional — absent in pre-feature state files (loadSprintState defaults to
+   * []). Provides at-most-once dedup (AC #11) across runner re-entry. Contains
+   * only eventKey strings — never a secret, never agent text. No migration.
+   */
+  notifiedEvents?: string[];
 }
 
 function resolveRaptorHome(): string {
@@ -162,6 +169,7 @@ export function loadSprintState(
     state.retroProposals = state.retroProposals ?? null;
     state.features = state.features ?? null;
     state.currentFeatureSlug = state.currentFeatureSlug ?? null;
+    state.notifiedEvents = state.notifiedEvents ?? [];
     for (const step of state.steps) {
       step.attempts = step.attempts ?? 0;
       step.failures = step.failures ?? [];
