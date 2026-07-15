@@ -120,8 +120,32 @@ beforeEach(() => {
   jest.spyOn(os, "homedir").mockReturnValue(fakeHome);
 
   spawnAgentMock.mockReset();
+  // Write the per-role required artifact (as a real agent would) so the REAL
+  // runner's `expectedOutputs` gate is satisfied and the sprint ADVANCES to its
+  // checkpoints. Without producing `docs/specs/{slug}.md`, step 1 (PO author
+  // spec) can never satisfy its required output, burns its attempts, and the
+  // sprint ESCALATES instead of parking at spec-review — which is exactly what
+  // the AC-12 production-seam test asserts against.
   spawnAgentMock.mockImplementation(
-    async (): Promise<AgentResult> => ({ output: "step done", exitCode: 0 })
+    async (
+      role: string,
+      _systemPrompt: string,
+      _context: string,
+      _taskDescription: string,
+      cwd: string
+    ): Promise<AgentResult> => {
+      const artifact: Record<string, string> = {
+        po: path.join(cwd, "docs", "specs", `${SLUG}.md`),
+        architect: path.join(cwd, "docs", "architecture", `${SLUG}.md`),
+        qa: path.join(cwd, "tests", "bdd", `${SLUG}.feature`),
+      };
+      const target = artifact[role];
+      if (target && !fs.existsSync(target)) {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, `# ${role} artifact for ${SLUG}\n`);
+      }
+      return { output: `${role} step done`, exitCode: 0 };
+    }
   );
 });
 
