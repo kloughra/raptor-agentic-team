@@ -76,6 +76,8 @@ import {
 } from "../../src/orchestrator/state";
 import { featureBranchName } from "../../src/orchestrator/multi-runner";
 import { spawnAgent, AgentResult } from "../../src/orchestrator/agents";
+import { runSprint, resumeSprintTool, ToolContext } from "../../src/tools";
+import { Registry } from "../../src/registry";
 
 const spawnAgentMock = spawnAgent as jest.MockedFunction<typeof spawnAgent>;
 
@@ -769,5 +771,96 @@ describe("AC 12: production seam — real sprint parks, boundary reloads persist
     });
 
     expect(driver.events).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
+// AC 12 — REAL TOOL BOUNDARY: runSprint / resumeSprintTool must emit through the
+// production `dispatchNotification` seam (src/tools.ts), not a reimplementation.
+//
+// The describe above drives `runSprintFromStep` (the runner has NO notification
+// code) and calls `emitNotification` inline — so it can pass even if the entire
+// tool-boundary wiring (`await dispatchNotification(...)` at tools.ts:764/816 and
+// the `ctx.notifications` field) is deleted. These tests close that hole: they
+// call the REAL `runSprint`/`resumeSprintTool(ctx, …)` with notifications
+// configured and assert the JSONL sink line PRODUCED BY THE PRODUCTION PATH.
+//
+// MUTATION-VERIFIED (RED): removing `await dispatchNotification(...)` from either
+// call site turns the corresponding test RED (no sink file / no new line — no
+// other code path writes the sink).
+// ===========================================================================
+
+describe("AC 12: the REAL tool boundary emits through the production dispatchNotification seam", () => {
+  const TEMPLATE_PATH = path.resolve(__dirname, "../../template/TEAM.md");
+
+  function makeToolCtx(): ToolContext {
+    const registry = new Registry(path.join(fakeHome, ".raptor", "projects.json"));
+    return {
+      projectsBaseDir: path.join(tmpDir, "workspace"),
+      registry,
+      templatePath: TEMPLATE_PATH,
+      // Default-on local sink; this is exactly what src/index.ts wires in main().
+      notifications: {
+        config: { notifications: { enabled: true } } as unknown as RaptorConfig,
+      },
+    };
+  }
+
+  async function registerProject(ctx: ToolContext): Promise<string> {
+    const projectPath = await initProject(PROJECT);
+    await ctx.registry.addProject({
+      name: PROJECT,
+      slug: PROJECT,
+      description: "notification-egress seam project",
+      path: projectPath,
+      createdAt: "2026-07-12T00:00:00.000Z",
+    });
+    return projectPath;
+  }
+
+  function sinkLines(): string[] {
+    const sink = path.join(fakeHome, ".raptor", PROJECT, "notifications.jsonl");
+    if (!fs.existsSync(sink)) return [];
+    return fs.readFileSync(sink, "utf-8").trim().split("\n").filter(Boolean);
+  }
+
+  it("runSprint(ctx) parks at a checkpoint and writes ONE state-derived sink line via tools.ts:764", async () => {
+    const ctx = makeToolCtx();
+    await registerProject(ctx);
+
+    const result = await runSprint(ctx, { name: PROJECT, sprint: SPRINT });
+    expect(result.status).toBe("checkpoint");
+
+    // The ONLY path that writes this sink is dispatchNotification at the boundary.
+    const lines = sinkLines();
+    expect(lines).toHaveLength(1);
+
+    // Payload derives from PERSISTED state (not the runner's return message).
+    const persisted = loadSprintState(PROJECT, SPRINT)!;
+    expect(persisted.status).toBe("paused");
+    const emitted = JSON.parse(lines[0]) as NotificationEvent & { status?: string };
+    expect(typeof emitted.eventKey).toBe("string");
+    expect(emitted.eventKey).toContain(String(SPRINT));
+    expect(emitted.status).toBe(persisted.status);
+  });
+
+  it("resumeSprintTool(ctx) emits a fresh event through the production seam (tools.ts:816)", async () => {
+    const ctx = makeToolCtx();
+    await registerProject(ctx);
+
+    await runSprint(ctx, { name: PROJECT, sprint: SPRINT });
+    const afterRun = sinkLines().length;
+    expect(afterRun).toBe(1);
+
+    // Approve the spec-review checkpoint → the sprint advances and the resume
+    // boundary dispatches again for the newly-persisted state.
+    const resumed = await resumeSprintTool(ctx, {
+      name: PROJECT,
+      sprint: SPRINT,
+      action: "approve",
+    });
+    expect(resumed.status).toBeDefined();
+
+    expect(sinkLines().length).toBeGreaterThan(afterRun);
   });
 });
