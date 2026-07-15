@@ -136,7 +136,13 @@ function deriveReason(
   if (kind === "escalation") {
     const step = escalatedStep(state);
     if (!step) return null;
-    return `step ${step.step} (${step.escalationReason ?? "escalated"})`;
+    const base = `step ${step.step} (${step.escalationReason ?? "escalated"})`;
+    // branch-protection-merge-lockout (Sprint 18, AC 6): when the escalation
+    // carries a persisted actionable detail (the PR-naming lockout message),
+    // append it so the out-of-band notification names the concrete human
+    // action. Back-compatible: absent ⇒ the existing `step N (reason)` string.
+    if (step.escalationDetail) return `${base}: ${step.escalationDetail}`;
+    return base;
   }
   return null;
 }

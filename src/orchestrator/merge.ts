@@ -7,6 +7,14 @@ export interface MergeResult {
   method: "github" | "local";
   error?: string;
   alreadyMerged?: boolean;
+  /**
+   * branch-protection-merge-lockout (Sprint 18, OQ2): the open-PR number,
+   * threaded onto the structured result on the `gh` open-PR path (success or
+   * failure) so the escalation message can name the PR without re-querying
+   * `gh`. Additive & optional — absent on the local-fallback / no-PR paths ⇒
+   * the message omits the PR reference and names the action only.
+   */
+  prNumber?: number;
 }
 
 const GH_TIMEOUT_MS = 30 * 1000; // 30 seconds
@@ -73,7 +81,8 @@ async function mergeViaGitHub(
   cwd: string,
   featureSlug: string,
   sprint: number,
-  branchName: string
+  branchName: string,
+  prNumber: number
 ): Promise<MergeResult> {
   // C1: pre-merge push (never-forced, single refspec). Wrapped so executeMerge
   // never throws (AC #2). On failure, return before touching `gh pr merge`.
@@ -85,6 +94,7 @@ async function mergeViaGitHub(
       success: false,
       method: "github",
       error: `Pre-merge push of branch '${branchName}' failed: ${msg}`,
+      prNumber,
     };
   }
 
@@ -96,14 +106,17 @@ async function mergeViaGitHub(
       { cwd, timeout: GH_TIMEOUT_MS },
       (error, stdout, stderr) => {
         if (error) {
+          // branch-protection-merge-lockout (OQ2): carry the PR number onto the
+          // failure result so the merge seam can name it in the escalation.
           resolve({
             success: false,
             method: "github",
             error: stderr || error.message,
+            prNumber,
           });
           return;
         }
-        resolve({ success: true, method: "github" });
+        resolve({ success: true, method: "github", prNumber });
       }
     );
   });
@@ -185,8 +198,9 @@ export async function executeMerge(
       };
     }
 
-    // Open PR — merge via GitHub (pre-merge push runs at the head of mergeViaGitHub)
-    return mergeViaGitHub(projectPath, featureSlug, sprint, branchName);
+    // Open PR — merge via GitHub (pre-merge push runs at the head of mergeViaGitHub).
+    // Thread the resolved PR number so the failure result can name it (OQ2).
+    return mergeViaGitHub(projectPath, featureSlug, sprint, branchName, prStatus);
   }
 
   // No GitHub PR — fall back to local git merge

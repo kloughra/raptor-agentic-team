@@ -89,6 +89,29 @@ export const USER_ACTIONABLE_ERROR_PATTERNS: UserActionablePattern[] = [
     action:
       "Raise your usage limit at https://claude.ai/settings/usage, then resume the sprint.",
   },
+  // ---------------------------------------------------------------------------
+  // Branch-protection merge-refusal signatures (Sprint 18,
+  // branch-protection-merge-lockout, AC 1/2). Order matters —
+  // `resolveUserAction` returns the FIRST match; the specific review-required
+  // entry precedes the general protection/lock entry (architecture §API
+  // Contracts). The regexes bias toward the confirmed `gh pr merge` stderr
+  // specimens (Open Question 1) without over-fitting one exact string, and
+  // deliberately do NOT match the bare "not mergeable" conflict string (C4 —
+  // that ambiguous divergence case is push-before-merge's domain).
+  {
+    // required approving / code-owner review
+    pattern:
+      /at least \d+ approving review|approving review is required|review required|changes must be approved|code owner/i,
+    action:
+      "Approve the PR (an approving or code-owner review is required), then resume the sprint.",
+  },
+  {
+    // protected / locked base branch (lock_branch: true, branch-protection policy)
+    pattern:
+      /protected branch|branch is protected|branch protection|base branch (?:policy|restrictions)|is not authorized|not allowed to (?:push|merge)|branch .*is locked|lock_branch/i,
+    action:
+      "Unlock `main` (branch protection / lock_branch is blocking the squash-merge) or merge the PR manually, then resume the sprint.",
+  },
 ];
 
 /**
