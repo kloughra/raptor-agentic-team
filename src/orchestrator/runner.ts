@@ -1124,8 +1124,9 @@ export async function runSprintFromStep(
       const systemPrompt = buildRolePrompt(step.role);
       let context = buildStepContext(step.step, projectPath, featureSlug);
 
-      // Part 1 (AC 1/2): inject the adversarial-verifier gate into the step-7
-      // QA "Run test suite" prompt (no-op for every other step).
+      // Inject the composed step-7 review gate (Sprint-14 adversarial +
+      // Sprint-17 mutation-check) into the QA "Run test suite" prompt (no-op for
+      // every other step).
       context = injectStep7Gate(step, context);
 
       // Layer 1: Inject TEAM.md so agents see the canonical process definition
@@ -1888,8 +1889,9 @@ export async function runAgentStepCycle(
     const systemPrompt = buildRolePrompt(step.role);
     let context = buildStepContext(step.step, projectPath, featureSlug);
 
-    // Part 1 (AC 1/2): inject the adversarial-verifier gate into the step-7
-    // QA "Run test suite" prompt (no-op for every other step).
+    // Inject the composed step-7 review gate (Sprint-14 adversarial +
+    // Sprint-17 mutation-check) into the QA "Run test suite" prompt (no-op for
+    // every other step).
     context = injectStep7Gate(step, context);
 
     const teamMdContext = buildTeamMdContext(projectPath);
