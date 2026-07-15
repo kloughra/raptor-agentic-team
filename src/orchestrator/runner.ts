@@ -26,7 +26,7 @@ import {
   buildRolePrompt,
   buildStepContext,
   buildTeamMdContext,
-  buildAdversarialGateSection,
+  buildStep7GateInstruction,
 } from "./prompts";
 import { spawnAgent } from "./agents";
 import { hasBlockerMarker } from "./blocker-marker";
@@ -94,13 +94,15 @@ function loadRaptorConfig(): RaptorConfig {
 }
 
 /**
- * Part 1 (AC 1/2): append the adversarial-verifier instruction to the step-7
- * QA "Run test suite" gate agent's context. Injected in orchestrator code (not
- * TEAM.md), so it takes effect for every sprint. No-op for all other steps.
+ * Append the full step-7 review-gate instruction — the Sprint-14 adversarial
+ * section PLUS the Sprint-17 mutation-check evidence requirement, composed by
+ * buildStep7GateInstruction — to the step-7 QA "Run test suite" gate agent's
+ * context. Injected in orchestrator code (not TEAM.md), so it takes effect for
+ * every sprint. One helper, both dispatch seams — no drift. No-op for all other steps.
  */
-function injectAdversarialGate(step: WorkflowStep, context: string): string {
+function injectStep7Gate(step: WorkflowStep, context: string): string {
   if (step.role === "qa" && step.name === "Run test suite") {
-    return `${context}\n\n${buildAdversarialGateSection()}`;
+    return `${context}\n\n${buildStep7GateInstruction()}`;
   }
   return context;
 }
@@ -1122,9 +1124,10 @@ export async function runSprintFromStep(
       const systemPrompt = buildRolePrompt(step.role);
       let context = buildStepContext(step.step, projectPath, featureSlug);
 
-      // Part 1 (AC 1/2): inject the adversarial-verifier gate into the step-7
-      // QA "Run test suite" prompt (no-op for every other step).
-      context = injectAdversarialGate(step, context);
+      // Inject the composed step-7 review gate (Sprint-14 adversarial +
+      // Sprint-17 mutation-check) into the QA "Run test suite" prompt (no-op for
+      // every other step).
+      context = injectStep7Gate(step, context);
 
       // Layer 1: Inject TEAM.md so agents see the canonical process definition
       const teamMdContext = buildTeamMdContext(projectPath);
@@ -1886,9 +1889,10 @@ export async function runAgentStepCycle(
     const systemPrompt = buildRolePrompt(step.role);
     let context = buildStepContext(step.step, projectPath, featureSlug);
 
-    // Part 1 (AC 1/2): inject the adversarial-verifier gate into the step-7
-    // QA "Run test suite" prompt (no-op for every other step).
-    context = injectAdversarialGate(step, context);
+    // Inject the composed step-7 review gate (Sprint-14 adversarial +
+    // Sprint-17 mutation-check) into the QA "Run test suite" prompt (no-op for
+    // every other step).
+    context = injectStep7Gate(step, context);
 
     const teamMdContext = buildTeamMdContext(projectPath);
     if (teamMdContext) context = `${teamMdContext}\n\n${context}`;
