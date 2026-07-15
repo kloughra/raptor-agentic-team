@@ -52,3 +52,9 @@ export type { ArtifactRequirement, InjectedArtifact, ArtifactInjectionResult } f
 
 export { decomposeTask, executeNarrowedRetry, isNarrowable } from "./scope-narrowing";
 export type { SubTask, NarrowingResult, NarrowingConfig } from "./scope-narrowing";
+
+export { deriveNotificationEvent, buildResumeCommand, emitNotification } from "./notifications";
+export type { NotificationEvent, DeriveOptions, EmitOptions } from "./notifications";
+
+export { JsonlSinkDriver, resolveDrivers } from "./notification-driver";
+export type { NotificationDriver } from "./notification-driver";
