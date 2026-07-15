@@ -376,12 +376,13 @@ describe("AC 10 & NFR-3: a genuine FS failure surfaces as an error", () => {
   it("returns { status: 'error' } (never a false success) when deletion throws", async () => {
     seedState("in-progress");
 
-    // Force the underlying delete to fail with a real FS-style error so the
-    // tool's try/catch (AC 10) is exercised — a mock of fs.rmSync is acceptable
-    // here because we are provoking the ERROR path, not the happy-path delete
-    // (which the other suites drive against the real filesystem).
-    const rmSpy = jest
-      .spyOn(fs, "rmSync")
+    // Force the delete to fail with a real FS-style error so the tool's
+    // try/catch (AC 10) is exercised. We spy the `deleteSprintState` export
+    // (configurable) rather than `fs.rmSync` (non-configurable — jest.spyOn
+    // throws "Cannot redefine property"); this provokes the same ERROR path at
+    // the tool's delete seam while loadSprintState still reads the real state.
+    const delSpy = jest
+      .spyOn(stateApi, "deleteSprintState")
       .mockImplementation(() => {
         throw new Error("EACCES: permission denied, unlink");
       });
@@ -393,7 +394,7 @@ describe("AC 10 & NFR-3: a genuine FS failure surfaces as an error", () => {
       // Truthfulness: on a failed delete the state file is NOT reported gone.
       expect(fs.existsSync(stateFilePath())).toBe(true);
     } finally {
-      rmSpy.mockRestore();
+      delSpy.mockRestore();
     }
   });
 });

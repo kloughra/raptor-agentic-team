@@ -25,6 +25,7 @@ import {
   resumeSprint,
   loadSprintState,
   saveSprintState,
+  deleteSprintState,
   renderProgressTable,
   emitNotification,
 } from "./orchestrator";
@@ -827,5 +828,88 @@ export async function resumeSprintTool(
         }
       : undefined,
     message: result.message,
+  };
+}
+
+/**
+ * reset_sprint (Sprint 16) — the first-class complement to resume_sprint: clear
+ * the persisted per-sprint state so a subsequent `run_sprint {slug} {N}` starts
+ * that sprint over from step 1 with a clean slate. Frees a sprint wedged in any
+ * status resume_sprint refuses — most importantly the un-resumable `in-progress`
+ * limbo. Never throws to the transport; every failure returns `{status:"error"}`.
+ * Touches ONLY ~/.raptor/{slug}/sprint-{N}.json — no git, artifacts, or registry.
+ */
+export async function resetSprintTool(
+  ctx: ToolContext,
+  args: { name: string; sprint: number; confirm?: boolean }
+): Promise<Record<string, unknown>> {
+  const project = await ctx.registry.findProject(args.name);
+  if (!project) {
+    return { status: "error", message: `Project '${args.name}' not found.` };
+  }
+
+  if (!fs.existsSync(project.path)) {
+    return {
+      status: "error",
+      message: `Project directory missing at '${project.path}'.`,
+    };
+  }
+
+  const nextAction = `run_sprint ${args.name} ${args.sprint}`;
+
+  // No state on disk → informative no-op success (AC 6); idempotent (NFR-2).
+  const state = loadSprintState(args.name, args.sprint);
+  if (!state) {
+    return {
+      status: "success",
+      project: args.name,
+      sprint: args.sprint,
+      priorStatus: "none",
+      message: `No sprint state found for sprint ${args.sprint} — nothing to reset.`,
+      nextAction,
+    };
+  }
+
+  // Guard a completed (shipped) sprint unless explicitly forced (AC 7). Every
+  // other status — escalated / failed / in-progress / paused — resets freely.
+  if (state.status === "complete" && args.confirm !== true) {
+    return {
+      status: "error",
+      project: args.name,
+      sprint: args.sprint,
+      priorStatus: "complete",
+      message:
+        `Sprint ${args.sprint} is 'complete' (shipped). Re-run reset_sprint with ` +
+        `confirm=true to force-discard its orchestration state. Committed ` +
+        `artifacts, PR, and summary are unaffected.`,
+    };
+  }
+
+  // Clear the state file (AC 4, 5). A genuine FS failure surfaces as an error,
+  // never a swallowed success (AC 10, NFR-3).
+  try {
+    deleteSprintState(args.name, args.sprint);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return {
+      status: "error",
+      project: args.name,
+      sprint: args.sprint,
+      priorStatus: state.status,
+      message: `Failed to clear sprint state for sprint ${args.sprint}: ${reason}`,
+    };
+  }
+
+  const totalSteps = state.steps.length;
+  const completedSteps = state.steps.filter((s) => s.status === "complete").length;
+
+  return {
+    status: "success",
+    project: args.name,
+    sprint: args.sprint,
+    priorStatus: state.status,
+    summary: `${completedSteps}/${totalSteps} steps complete, status '${state.status}'`,
+    message: `Cleared sprint ${args.sprint} state (was '${state.status}').`,
+    nextAction,
   };
 }

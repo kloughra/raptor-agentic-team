@@ -18,6 +18,7 @@ import {
   getProjectStatus,
   runSprint,
   resumeSprintTool,
+  resetSprintTool,
   ToolContext,
 } from "./tools";
 import { surfaceOutcome, buildThrownErrorResult } from "./error-surfacing";
@@ -253,6 +254,52 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         return surfaceOutcome(result, content);
       } catch (err) {
         return buildThrownErrorResult("resume_sprint", err);
+      }
+    }
+  );
+
+  // Register reset_sprint tool
+  server.tool(
+    "reset_sprint",
+    "Clear the persisted state for a sprint so a fresh run_sprint starts it over from step 1. Frees a sprint wedged in any status — escalated, failed, in-progress, or paused — that resume_sprint cannot re-engage. Does NOT carry feedback, re-run the sprint, or touch git branches, PRs, committed artifacts, summaries, the backlog, or the registry — only the sprint state file. Do not run against a sprint that is actively executing.",
+    {
+      name: z
+        .string()
+        .describe("Project name/slug as registered in Raptor"),
+      sprint: z
+        .number()
+        .int()
+        .positive()
+        .describe("Sprint number to reset"),
+      confirm: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Confirmation flag. Required only to force-reset a 'complete' (shipped) sprint; ignored for all other statuses."
+        ),
+    },
+    async (args) => {
+      try {
+        const result = await resetSprintTool(ctx, args);
+        const content: { type: "text"; text: string }[] = [];
+
+        if (result.message) {
+          content.push({ type: "text" as const, text: result.message as string });
+        }
+        if (result.summary) {
+          content.push({ type: "text" as const, text: result.summary as string });
+        }
+        if (result.nextAction) {
+          content.push({
+            type: "text" as const,
+            text: `Next: ${result.nextAction as string}`,
+          });
+        }
+
+        return surfaceOutcome(result, content);
+      } catch (err) {
+        return buildThrownErrorResult("reset_sprint", err);
       }
     }
   );
