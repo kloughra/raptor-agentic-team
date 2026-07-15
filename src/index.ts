@@ -28,7 +28,7 @@ const CONFIG_PATH = path.join(RAPTOR_HOME, "config.json");
 const REGISTRY_PATH = path.join(RAPTOR_HOME, "projects.json");
 
 /**
- * Register all six Raptor tools on the given MCP server.
+ * Register all seven Raptor tools on the given MCP server.
  *
  * Every handler routes its outcome through the single surfacing seam
  * (`surfaceOutcome` on returns, `buildThrownErrorResult` on throws) so no tool
