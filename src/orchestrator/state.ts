@@ -195,6 +195,22 @@ export function saveSprintState(
   fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
 }
 
+/**
+ * Delete the persisted state file for a sprint, returning the sprint to its
+ * pre-first-run condition (`reset_sprint`, Sprint 16). Keeps state-file path
+ * resolution encapsulated in this module.
+ *
+ * @returns `true` if a state file existed and was removed, `false` if there was
+ *   nothing to remove (idempotent no-op). Throws only on a genuine filesystem
+ *   failure (e.g. EACCES/EPERM) — callers convert that into a `{status:"error"}`.
+ */
+export function deleteSprintState(projectSlug: string, sprint: number): boolean {
+  const filePath = sprintStatePath(projectSlug, sprint);
+  if (!fs.existsSync(filePath)) return false;
+  fs.rmSync(filePath);
+  return true;
+}
+
 export function createInitialState(
   project: string,
   sprint: number,

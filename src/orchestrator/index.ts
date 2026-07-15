@@ -1,7 +1,7 @@
 export { SPRINT_WORKFLOW, HANDOFF_MAP } from "./workflow";
 export type { WorkflowStep, Role, CheckpointType, StepStatus } from "./workflow";
 
-export { loadSprintState, saveSprintState, createInitialState } from "./state";
+export { loadSprintState, saveSprintState, createInitialState, deleteSprintState } from "./state";
 export type { SprintState, StepState, CheckpointState, FailureRecord } from "./state";
 
 export { renderProgressTable } from "./progress";

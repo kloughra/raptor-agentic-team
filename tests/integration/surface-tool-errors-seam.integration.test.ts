@@ -54,6 +54,7 @@ const EXPECTED_TOOLS = [
   "get_project_status",
   "run_sprint",
   "resume_sprint",
+  "reset_sprint",
 ] as const;
 
 type SurfacedResult = { content: { type: string; text: string }[]; isError?: true };
