@@ -159,6 +159,76 @@ false-green failure this gate exists to prevent.
 --- End Adversarial Verifier Review Gate ---`;
 }
 
+/**
+ * Mutation-check gate instruction (review-gate-mutation-check, Sprint 17).
+ * Extends the review gate from "reason about coverage" to "produce mechanical RED
+ * evidence of coverage": the verifier must break the primary production seam and
+ * prove the suite notices. Composed AFTER buildAdversarialGateSection by
+ * buildStep7GateInstruction — strictly additive, never a replacement.
+ *
+ * Content contract (pinned by the AC 1-5/8 tests):
+ *  - Perform a mutation test on the primary production seam(s) the feature owns.
+ *  - Decision rule: a mutation that FAILs ≥1 feature-scoped test (RED) confirms
+ *    coverage; a suite that stays GREEN under the mutation is a false-green → FAIL.
+ *  - Restore-and-verify: revert the mutation and re-confirm green before finishing.
+ *  - Emit a structured evidence block (SEAM / MUTATION / RED EVIDENCE / RESTORED).
+ *  - Per-independent-seam guidance (not a countable rule); no-executable-seam skip.
+ */
+export function buildMutationCheckSection(): string {
+  return `--- Mutation-Check Evidence Requirement ---
+Reasoning about coverage is not enough — a verifier can be wrong about whether a
+test exercises the real code, but a MUTATION cannot lie: if breaking the production
+code does not break a test, the coverage is false. You MUST produce mechanical
+mutation evidence for this review.
+
+Do this:
+
+(1) Identify the PRIMARY PRODUCTION SEAM(S) this feature introduces or changes — the
+    actual function/wiring where the new behavior lives (not a test, not a type).
+    If the feature adds more than one INDEPENDENT SEAM (for example two separate
+    call sites, or a helper plus its wiring), mutate EACH independent seam — breaking
+    only one may leave the other's tests green, which is exactly the gap this check
+    exists to catch. This is guidance, not a fixed count: a feature with a single
+    seam needs a single mutation.
+
+(2) MUTATE the seam in the working copy: delete or no-op its body, or remove the
+    wiring call. Then run the feature-scoped tests.
+
+(3) DECISION RULE — apply it explicitly:
+    • If the mutation makes AT LEAST ONE feature-scoped test FAIL (RED) — including a
+      compile/typecheck failure caused by the mutation — coverage of that seam is
+      CONFIRMED. Proceed.
+    • If the suite stays GREEN under the mutation, that is a FALSE-GREEN: no test
+      covers that seam. FLAG and FAIL the review, naming the uncovered seam.
+
+(4) RESTORE and verify: revert the mutation and re-confirm the suite is GREEN before
+    completing. NEVER leave mutated production code behind.
+
+(5) SURFACE the evidence in your reported result as this block, one per seam:
+    MUTATION CHECK
+    SEAM: <file:symbol the feature owns>
+    MUTATION: <how it was broken — deleted body / removed wiring call / no-op>
+    RED EVIDENCE: <failing test name(s) or the compile/typecheck error the mutation caused>
+    RESTORED: <confirmation the code was reverted and the suite is green again>
+
+If this feature's deliverable is NOT executable production code (a docs-only or
+config-only change with NO EXECUTABLE PRODUCTION SEAM to break), record
+"SEAM: none (no executable production seam)" and skip the mutation — do not fabricate
+one. If you CANNOT obtain the evidence (the mutation can't be run), FLAG and FAIL —
+an inability to produce evidence is not a pass.
+--- End Mutation-Check Evidence Requirement ---`;
+}
+
+/**
+ * The full step-7 review-gate instruction the runner injects at BOTH the
+ * single-feature and multi-feature QA seams. Single source of truth so the two
+ * seams cannot drift (review-gate-mutation-check AC 7): the Sprint-14 adversarial
+ * section composed with the Sprint-17 mutation-check section.
+ */
+export function buildStep7GateInstruction(): string {
+  return `${buildAdversarialGateSection()}\n\n${buildMutationCheckSection()}`;
+}
+
 export function buildRolePrompt(role: Role, dinoNames?: Record<Role, DinoIdentity>): string {
   const names = dinoNames || resolveDinoNames();
   const preamble = buildDinoIdentityPreamble(role, names);

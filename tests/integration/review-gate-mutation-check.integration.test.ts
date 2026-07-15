@@ -120,19 +120,31 @@ function seedSingleFeature(projectSlug: string): void {
   saveSprintState(projectSlug, SPRINT, state);
 }
 
-/** Seed a MULTI-feature sprint (features[] present) with the feature at step 7. */
+/**
+ * Seed a MULTI-feature sprint with the feature under test parked at step 7.
+ * TWO features are required so the dispatcher takes the multi-feature path
+ * (`runner.ts:801` — `isMultiFeature = state.features.length > 1` → the :1889/:1893
+ * seam). The sibling is fully complete so it spawns NOTHING before SLUG's step-7
+ * QA gate, keeping SLUG's gate the first QA spawn.
+ */
 function seedMultiFeature(projectSlug: string): void {
   const state = createInitialState(projectSlug, SPRINT, workflowSteps(), null);
-  const features = createFeatureStates([SLUG], SPRINT);
+  const features = createFeatureStates([SLUG, `${SLUG}-sibling`], SPRINT);
   for (const f of features) {
-    for (const s of f.steps) {
-      if (s.step < 7) {
-        s.status = "complete";
-        s.attempts = 1;
+    if (f.slug === SLUG) {
+      for (const s of f.steps) {
+        if (s.step < 7) {
+          s.status = "complete";
+          s.attempts = 1;
+        }
       }
+      f.currentStep = 7;
+      f.status = "in-progress";
+    } else {
+      for (const s of f.steps) s.status = "complete";
+      f.currentStep = 9;
+      f.status = "complete";
     }
-    f.currentStep = 7;
-    f.status = "in-progress";
   }
   (state as SprintState).features = features;
   state.currentFeatureSlug = SLUG;
